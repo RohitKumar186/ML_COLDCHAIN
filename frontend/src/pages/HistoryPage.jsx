@@ -1,0 +1,18 @@
+import React,{useMemo,useState} from "react";
+import {TrendingUp,AlertTriangle,Activity} from "lucide-react";
+import {ResponsiveContainer,AreaChart,Area,XAxis,YAxis,CartesianGrid,Tooltip,ReferenceArea} from "recharts";
+import "../css/history.css";
+
+const makeData=()=>Array.from({length:24},(_,i)=>({time:`${String(9+Math.floor(i/2)).padStart(2,"0")}:${i%2?"30":"00"}`,temp:Number((5.1+Math.sin(i/3)*.7+(Math.random()-.5)*.25).toFixed(1)),rh:Math.round(48+Math.sin(i/4)*5+(Math.random()-.5)*2),voltage:Math.round(230+Math.sin(i/3)*4)}));
+export default function HistoryPage(){
+ const [tab,setTab]=useState("temp"); const data=useMemo(makeData,[]);
+ const config={temp:{label:"Temperature",unit:"°C",key:"temp",safe:[2,8]},rh:{label:"Humidity",unit:"%",key:"rh",safe:[35,60]},voltage:{label:"Voltage",unit:"V",key:"voltage",safe:[195,250]}}[tab];
+ return <div>
+  <div className="page-head"><div><div className="eyebrow">02 · RECORDS</div><h1 className="page-title">History</h1><p className="page-desc">Review sensor trends, historical readings and device/failure events.</p></div></div>
+  <div className="card history-chart"><div className="history-tabs">{Object.entries({temp:"Temperature",rh:"Humidity",voltage:"Voltage"}).map(([k,v])=><button key={k} className={tab===k?"tab active":"tab"} onClick={()=>setTab(k)}>{v}</button>)}</div><div className="chart-box"><ResponsiveContainer width="100%" height="100%"><AreaChart data={data}><CartesianGrid stroke="#e7ebf1" strokeDasharray="3 3" vertical={false}/><ReferenceArea y1={config.safe[0]} y2={config.safe[1]} fill="#159b61" fillOpacity={.06}/><XAxis dataKey="time" tick={{fontSize:10}}/><YAxis tick={{fontSize:10}}/><Tooltip/><Area type="monotone" dataKey={config.key} stroke="#2867e8" fill="#eaf1ff" strokeWidth={2}/></AreaChart></ResponsiveContainer></div><div className="kpi-row history-kpis"><div className="stat"><div className="stat-label">Recent low</div><div className="stat-value">{Math.min(...data.map(x=>x[config.key]))}{config.unit}</div></div><div className="stat"><div className="stat-label">Recent high</div><div className="stat-value">{Math.max(...data.map(x=>x[config.key]))}{config.unit}</div></div><div className="stat"><div className="stat-label">Readings</div><div className="stat-value">{data.length}</div></div><div className="stat"><div className="stat-label">Period</div><div className="stat-value">12h</div></div></div></div>
+  <div className="grid grid-2 history-bottom">
+   <div className="card"><div className="card-head"><div><h3 className="card-title">Historical sensor readings</h3><div className="card-sub">Raw temperature, humidity and voltage samples</div></div><Activity size={16} color="var(--blue)"/></div><div className="table-wrap"><table className="table"><thead><tr><th>Time</th><th>Temperature</th><th>Humidity</th><th>Voltage</th></tr></thead><tbody>{data.slice(-12).reverse().map((x,i)=><tr key={i}><td>{x.time}</td><td>{x.temp}°C</td><td>{x.rh}%</td><td>{x.voltage}V</td></tr>)}</tbody></table></div></div>
+   <div className="card"><div className="card-head"><div><h3 className="card-title">Device / failure history</h3><div className="card-sub">System events recorded by the device</div></div><AlertTriangle size={16} color="var(--amber)"/></div><div className="event-list"><div><span className="event-time">20:42</span><b>Device heartbeat OK</b><small>Connectivity restored</small></div><div><span className="event-time">19:18</span><b>Door closed</b><small>Access event completed</small></div><div><span className="event-time">17:51</span><b>Voltage warning</b><small>Supply briefly dropped</small></div><div><span className="event-time">16:20</span><b>Self-test passed</b><small>All systems healthy</small></div></div></div>
+  </div>
+ </div>
+}

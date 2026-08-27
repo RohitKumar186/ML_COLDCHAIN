@@ -1,0 +1,432 @@
+/* =========================================================
+   MONITORING PAGE
+========================================================= */
+
+.sensor-card {
+  min-height: 350px;
+}
+
+.sensor-title {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.sensor-icon {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  background: var(--blue2);
+  color: var(--blue);
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+
+.sensor-value {
+  font: 700 38px "Space Grotesk", sans-serif;
+  line-height: 1;
+  margin: 28px 0 24px;
+}
+
+.sensor-value small {
+  font: 500 14px Inter, sans-serif;
+  color: var(--muted);
+  margin-left: 4px;
+}
+
+.sensor-value.ok {
+  color: var(--green);
+}
+
+.sensor-value.warn {
+  color: var(--amber);
+}
+
+.sensor-value.bad {
+  color: var(--red);
+}
+
+
+/* =========================================================
+   TEMPERATURE CARD
+========================================================= */
+
+.temperature-card {
+  display: flex;
+  flex-direction: column;
+}
+
+.sensor-minmax {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+  margin-bottom: 18px;
+}
+
+.sensor-minmax > div:first-child {
+  border-right: 1px solid var(--line);
+}
+
+.sensor-minmax > div:last-child {
+  padding-left: 14px;
+}
+
+.sensor-minmax span {
+  display: block;
+  font: 500 9px "IBM Plex Mono", monospace;
+  text-transform: uppercase;
+  color: var(--muted);
+  letter-spacing: 0.05em;
+}
+
+.sensor-minmax b {
+  display: block;
+  font: 600 14px "Space Grotesk", sans-serif;
+  margin-top: 5px;
+}
+
+.temperature-range {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+
+  margin-top: auto;
+  padding-top: 14px;
+
+  border-top: 1px solid var(--line);
+
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.temperature-range strong {
+  color: var(--green);
+  font: 600 10px "IBM Plex Mono", monospace;
+}
+
+
+/* =========================================================
+   TEMPERATURE + GRAPH LAYOUT
+========================================================= */
+
+.monitoring-main {
+  display: grid;
+
+  /*
+    Temperature card on the left.
+    Graph on the right.
+  */
+  grid-template-columns:
+    minmax(280px, 0.75fr)
+    minmax(480px, 1.75fr);
+
+  gap: 18px;
+
+  align-items: stretch;
+}
+
+.temperature-chart-card {
+  min-width: 0;
+  min-height: 350px;
+
+  display: flex;
+  flex-direction: column;
+}
+
+
+/* =========================================================
+   GRAPH HEADER
+========================================================= */
+
+.chart-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 15px;
+}
+
+.chart-live {
+  display: inline-flex;
+  align-items: center;
+
+  padding: 5px 8px;
+
+  border-radius: 6px;
+
+  background: rgba(21, 155, 97, 0.08);
+  color: var(--green);
+
+  font: 600 9px "IBM Plex Mono", monospace;
+  letter-spacing: 0.04em;
+}
+
+
+/* =========================================================
+   GRAPH TIME RANGE
+========================================================= */
+
+.range-selector {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+
+  margin-top: 17px;
+  margin-bottom: 8px;
+
+  padding-bottom: 2px;
+}
+
+.range-option {
+  padding: 7px 11px;
+
+  border: 1px solid var(--line);
+  border-radius: 7px;
+
+  background: #ffffff;
+  color: var(--muted);
+
+  font: 600 9px "IBM Plex Mono", monospace;
+
+  cursor: pointer;
+
+  transition:
+    background 0.15s ease,
+    color 0.15s ease,
+    border-color 0.15s ease,
+    transform 0.15s ease;
+}
+
+.range-option:hover {
+  background: var(--surface2);
+  color: var(--text);
+}
+
+.range-option:active {
+  transform: scale(0.97);
+}
+
+.range-option.active {
+  background: var(--blue2);
+  color: var(--blue);
+  border-color: #cddcf8;
+}
+
+
+/* =========================================================
+   GRAPH
+========================================================= */
+
+.monitor-chart {
+  width: 100%;
+  height: 230px;
+
+  min-width: 0;
+
+  margin-top: 2px;
+}
+
+.chart-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+
+  gap: 10px;
+
+  margin-top: auto;
+  padding-top: 9px;
+
+  border-top: 1px solid var(--line);
+
+  font: 500 9px "IBM Plex Mono", monospace;
+  color: var(--muted);
+}
+
+.chart-footer b {
+  color: var(--text);
+}
+
+
+/* =========================================================
+   FAILURE DETECTION
+========================================================= */
+
+.failure-card {
+  margin-top: 18px;
+}
+
+.failure-grid {
+  display: grid;
+
+  grid-template-columns: repeat(3, 1fr);
+
+  gap: 12px;
+
+  margin-top: 5px;
+}
+
+.failure-item {
+  display: flex;
+  align-items: center;
+
+  gap: 12px;
+
+  min-height: 70px;
+
+  padding: 13px;
+
+  background: var(--surface2);
+
+  border: 1px solid var(--line);
+
+  border-radius: 10px;
+}
+
+.failure-status {
+  width: 34px;
+  height: 34px;
+
+  border-radius: 50%;
+
+  display: grid;
+  place-items: center;
+
+  flex-shrink: 0;
+}
+
+.failure-status.working {
+  background: rgba(21, 155, 97, 0.1);
+  color: var(--green);
+}
+
+.failure-status.failed {
+  background: rgba(220, 53, 69, 0.1);
+  color: var(--red);
+}
+
+.failure-info b {
+  display: block;
+
+  font: 600 11px "Space Grotesk", sans-serif;
+  line-height: 1.3;
+}
+
+.failure-info span {
+  display: block;
+
+  margin-top: 4px;
+
+  font-size: 9.5px;
+  line-height: 1.3;
+}
+
+.working-text {
+  color: var(--green);
+}
+
+.failure-text {
+  color: var(--red);
+}
+
+
+/* =========================================================
+   FAILURE TEST CONTROLS
+========================================================= */
+
+.failure-controls {
+  margin-top: 18px;
+}
+
+.test-controls {
+  display: flex;
+
+  flex-wrap: wrap;
+
+  gap: 9px;
+
+  margin-top: 5px;
+}
+
+
+/* =========================================================
+   RESPONSIVE
+========================================================= */
+
+@media (max-width: 1050px) {
+  .monitoring-main {
+    grid-template-columns:
+      minmax(250px, 0.8fr)
+      minmax(400px, 1.2fr);
+  }
+
+  .monitor-chart {
+    height: 220px;
+  }
+}
+
+
+@media (max-width: 800px) {
+  .monitoring-main {
+    grid-template-columns: 1fr;
+  }
+
+  .temperature-card {
+    min-height: 300px;
+  }
+
+  .temperature-chart-card {
+    min-height: 350px;
+  }
+
+  .monitor-chart {
+    height: 250px;
+  }
+
+  .failure-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+
+@media (max-width: 560px) {
+  .sensor-value {
+    font-size: 34px;
+  }
+
+  .temperature-range {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .range-selector {
+    overflow-x: auto;
+
+    padding-bottom: 5px;
+
+    scrollbar-width: thin;
+  }
+
+  .range-option {
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+
+  .monitor-chart {
+    height: 230px;
+  }
+
+  .chart-footer {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .test-controls {
+    flex-direction: column;
+  }
+
+  .test-controls .btn {
+    width: 100%;
+  }
+}

@@ -1,0 +1,26 @@
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment
+.env
+.env.*
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# ML generated models
+*.pkl
+
+# Build output
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/

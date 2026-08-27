@@ -1,0 +1,1 @@
+"""Cooling control logic."""

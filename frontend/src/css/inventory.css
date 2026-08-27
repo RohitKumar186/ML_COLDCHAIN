@@ -1,0 +1,415 @@
+/* =========================================================
+   VACCINE INVENTORY
+========================================================= */
+
+.inventory-card {
+  padding: 22px;
+}
+
+.inventory-card .card-head {
+  align-items: center;
+}
+
+
+/* =========================================================
+   ENTRY FORM
+========================================================= */
+
+.entry-form {
+  display: grid;
+  grid-template-columns: 1.2fr 1.7fr 0.7fr 1.2fr auto;
+  gap: 12px;
+
+  padding: 16px;
+
+  background: var(--surface2);
+  border: 1px solid var(--line);
+  border-radius: 11px;
+
+  margin-bottom: 18px;
+}
+
+.entry-form label {
+  display: block;
+
+  font: 500 10px "IBM Plex Mono";
+  color: var(--muted);
+
+  margin: 0 0 6px;
+}
+
+.entry-form .input {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+
+/* =========================================================
+   STOCK IN / STOCK OUT
+========================================================= */
+
+.stock-type-field {
+  min-width: 0;
+}
+
+.stock-type-selector {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.stock-type {
+  min-height: 40px;
+
+  display: flex;
+  align-items: center;
+  gap: 7px;
+
+  padding: 6px 8px;
+
+  border: 1px solid var(--line);
+  border-radius: 8px;
+
+  background: #fff;
+  color: var(--muted);
+
+  cursor: pointer;
+
+  text-align: left;
+
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease;
+}
+
+.stock-type:hover {
+  background: var(--surface2);
+}
+
+.stock-type > svg {
+  flex-shrink: 0;
+}
+
+.stock-type span {
+  min-width: 0;
+}
+
+.stock-type b {
+  display: block;
+
+  font: 600 9px "Space Grotesk";
+  line-height: 1.2;
+}
+
+.stock-type small {
+  display: block;
+
+  margin-top: 2px;
+
+  font-size: 7.5px;
+  line-height: 1.2;
+
+  color: var(--muted);
+}
+
+
+/* Stock In selected */
+
+.stock-type.stock-in.active {
+  background: rgba(21, 155, 97, 0.07);
+  border-color: rgba(21, 155, 97, 0.35);
+  color: var(--green);
+}
+
+
+/* Stock Out selected */
+
+.stock-type.stock-out.active {
+  background: rgba(220, 53, 69, 0.06);
+  border-color: rgba(220, 53, 69, 0.3);
+  color: var(--red);
+}
+
+
+/* =========================================================
+   FORM ACTIONS
+========================================================= */
+
+.form-actions {
+  display: flex;
+  align-items: flex-end;
+  gap: 7px;
+}
+
+
+/* =========================================================
+   ERROR
+========================================================= */
+
+.inventory-error {
+  grid-column: 1 / -1;
+
+  display: flex;
+  align-items: center;
+  gap: 7px;
+
+  padding: 8px 10px;
+
+  border-radius: 7px;
+
+  background: rgba(220, 53, 69, 0.07);
+  border: 1px solid rgba(220, 53, 69, 0.18);
+
+  color: var(--red);
+
+  font-size: 10px;
+}
+
+
+/* =========================================================
+   VACCINE NAME
+========================================================= */
+
+.vaccine-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+
+  font-weight: 600;
+}
+
+.vaccine-icon {
+  width: 29px;
+  height: 29px;
+
+  border-radius: 8px;
+
+  background: var(--blue2);
+  color: var(--blue);
+
+  display: grid;
+  place-items: center;
+
+  flex-shrink: 0;
+}
+
+
+/* =========================================================
+   TRANSACTION BADGE
+========================================================= */
+
+.transaction-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+
+  padding: 5px 8px;
+
+  border-radius: 6px;
+
+  font: 600 9px "IBM Plex Mono";
+  white-space: nowrap;
+}
+
+.transaction-in {
+  color: var(--green);
+
+  background: rgba(21, 155, 97, 0.08);
+
+  border: 1px solid rgba(21, 155, 97, 0.15);
+}
+
+.transaction-out {
+  color: var(--red);
+
+  background: rgba(220, 53, 69, 0.07);
+
+  border: 1px solid rgba(220, 53, 69, 0.15);
+}
+
+
+/* =========================================================
+   QUANTITY
+========================================================= */
+
+.quantity-in {
+  color: var(--green);
+}
+
+.quantity-out {
+  color: var(--red);
+}
+
+
+/* =========================================================
+   DATE
+========================================================= */
+
+.date-cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+
+  color: var(--muted);
+
+  font: 500 10px "IBM Plex Mono";
+
+  white-space: nowrap;
+}
+
+
+/* =========================================================
+   DELETE BUTTON
+========================================================= */
+
+.icon-btn {
+  border: 0;
+  background: transparent;
+
+  color: #98a2b3;
+
+  cursor: pointer;
+
+  padding: 6px;
+
+  border-radius: 6px;
+
+  transition:
+    color 0.15s ease,
+    background 0.15s ease;
+}
+
+.icon-btn:hover {
+  color: var(--red);
+
+  background: rgba(220, 53, 69, 0.06);
+}
+
+
+/* =========================================================
+   TABLE
+========================================================= */
+
+.inventory-table {
+  min-width: 900px;
+}
+
+.inventory-card .table-wrap {
+  overflow-x: auto;
+}
+
+
+/* =========================================================
+   EMPTY STATE
+========================================================= */
+
+.empty-inventory {
+  text-align: center;
+
+  padding: 30px !important;
+
+  color: var(--muted);
+
+  font-size: 11px;
+}
+
+
+/* =========================================================
+   SUMMARY
+========================================================= */
+
+.inventory-summary {
+  margin-top: 18px;
+}
+
+.device-value {
+  font-size: 22px;
+}
+
+.stock-in-value {
+  color: var(--green);
+}
+
+.stock-out-value {
+  color: var(--red);
+}
+
+
+/* =========================================================
+   RESPONSIVE
+========================================================= */
+
+@media (max-width: 1050px) {
+  .entry-form {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .stock-type-field {
+    grid-column: span 2;
+  }
+
+  .form-actions {
+    grid-column: 1 / -1;
+
+    justify-content: flex-end;
+  }
+}
+
+
+@media (max-width: 900px) {
+  .entry-form {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .stock-type-field {
+    grid-column: 1 / -1;
+  }
+
+  .form-actions {
+    grid-column: 1 / -1;
+
+    justify-content: flex-end;
+  }
+}
+
+
+@media (max-width: 620px) {
+  .inventory-card {
+    padding: 16px;
+  }
+
+  .entry-form {
+    grid-template-columns: 1fr;
+
+    padding: 14px;
+  }
+
+  .stock-type-field {
+    grid-column: auto;
+  }
+
+  .stock-type-selector {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .form-actions {
+    grid-column: auto;
+
+    justify-content: stretch;
+
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .form-actions .btn {
+    width: 100%;
+  }
+}
+
+
+@media (max-width: 420px) {
+  .stock-type-selector {
+    grid-template-columns: 1fr;
+  }
+}
