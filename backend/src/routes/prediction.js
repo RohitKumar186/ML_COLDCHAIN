@@ -7,17 +7,19 @@ const ML_URL =
   "https://cold-chain-ml.onrender.com/predict";
 
 /*
+  =========================================================
   GET /api/prediction
 
   ESP32
-    ↓
+      ↓
   PostgreSQL
-    ↓
+      ↓
   Node.js
-    ↓
+      ↓
   Flask ML
-    ↓
-  React Frontend
+      ↓
+  Frontend
+  =========================================================
 */
 
 router.get("/", async (req, res) => {
@@ -44,9 +46,11 @@ router.get("/", async (req, res) => {
     // =====================================================
 
     if (result.rows.length === 0) {
+
       return res.status(503).json({
         error: "No sensor data available",
       });
+
     }
 
 
@@ -65,6 +69,7 @@ router.get("/", async (req, res) => {
 
     const ageInSeconds =
       (currentTime - recordedTime) / 1000;
+
 
     const deviceOnline =
       ageInSeconds <= 30 &&
@@ -110,6 +115,7 @@ router.get("/", async (req, res) => {
         timestamp: row.recorded_at,
 
       });
+
     }
 
 
@@ -125,7 +131,7 @@ router.get("/", async (req, res) => {
 
 
     // =====================================================
-    // VALIDATE TEMPERATURES
+    // VALIDATE SENSOR DATA
     // =====================================================
 
     if (
@@ -141,7 +147,7 @@ router.get("/", async (req, res) => {
 
 
     // =====================================================
-    // CALL PYTHON ML BACKEND
+    // CALL FLASK ML BACKEND
     // =====================================================
 
     const response = await fetch(
@@ -191,6 +197,10 @@ router.get("/", async (req, res) => {
 
     // =====================================================
     // COOLING LEVEL
+    //
+    // 0 = OFF
+    // 1 = LOW
+    // 2 = HIGH
     // =====================================================
 
     const coolingLevel =
@@ -200,22 +210,69 @@ router.get("/", async (req, res) => {
 
 
     // =====================================================
-    // RISK BASED ON COOLING LEVEL
+    // VALIDATE COOLING LEVEL
+    // =====================================================
+
+    const safeCoolingLevel =
+      [0, 1, 2].includes(coolingLevel)
+        ? coolingLevel
+        : 0;
+
+
+    // =====================================================
+    // RISK
     //
-    // 0 → LOW
-    // 1 → MEDIUM
-    // 2 → HIGH
+    // 0 = LOW
+    // 1 = MEDIUM
+    // 2 = HIGH
     // =====================================================
 
     let risk;
 
-    if (coolingLevel === 0) {
+    if (safeCoolingLevel === 0) {
+
       risk = "low";
-    } else if (coolingLevel === 1) {
+
+    } else if (safeCoolingLevel === 1) {
+
       risk = "medium";
+
     } else {
+
       risk = "high";
+
     }
+
+
+    // =====================================================
+    // COOLING DECISION
+    //
+    // Level 0 → OFF
+    // Level 1 → ON
+    // Level 2 → ON
+    // =====================================================
+
+    const coolingDecision =
+      safeCoolingLevel > 0
+        ? "ON"
+        : "OFF";
+
+
+    // =====================================================
+    // PELTIER STATUS
+    //
+    // IMPORTANT:
+    // Peltier follows cooling level.
+    //
+    // 0 → OFF
+    // 1 → ON
+    // 2 → ON
+    //
+    // Do NOT use mlData.peltier here.
+    // =====================================================
+
+    const peltier =
+      safeCoolingLevel > 0;
 
 
     // =====================================================
@@ -234,6 +291,8 @@ router.get("/", async (req, res) => {
 
     // =====================================================
     // CURRENT TEMPERATURE
+    //
+    // Always use actual ESP32/DB value.
     // =====================================================
 
     const current =
@@ -241,14 +300,21 @@ router.get("/", async (req, res) => {
 
 
     // =====================================================
-    // MIN / MAX
+    // PROJECTED VALUES
     // =====================================================
 
     const projectedValues = [
+
       current,
+
       ...futureTemperatures,
+
     ];
 
+
+    // =====================================================
+    // MINIMUM
+    // =====================================================
 
     const min =
       projectedValues.length > 0
@@ -257,6 +323,10 @@ router.get("/", async (req, res) => {
           )
         : current;
 
+
+    // =====================================================
+    // MAXIMUM
+    // =====================================================
 
     const max =
       projectedValues.length > 0
@@ -273,15 +343,19 @@ router.get("/", async (req, res) => {
     const data = [];
 
 
-    // Current point
+    // Current reading
     data.push({
+
       x: "Now",
+
       temp: current,
+
       forecast: current,
+
     });
 
 
-    // Future predictions
+    // Future ML predictions
     futureTemperatures.forEach(
       (temperature, index) => {
 
@@ -302,50 +376,50 @@ router.get("/", async (req, res) => {
 
 
     // =====================================================
-    // PELTIER STATUS
+    // TREND
     // =====================================================
 
-    /*
-      ML may return:
-        true / false
-        "ON" / "OFF"
-
-      Handle both correctly.
-    */
-
-    const peltier =
-      mlData.peltier === true ||
-      mlData.peltier === "ON";
+    const trend =
+      mlData.trend ||
+      "STABLE";
 
 
     // =====================================================
-    // COOLING DECISION
+    // MODE
     // =====================================================
 
-    const coolingDecision =
-      coolingLevel > 0
-        ? "ON"
-        : "OFF";
+    const mode =
+      mlData.mode ||
+      "ML_CONTROL";
 
 
     // =====================================================
-    // SEND TO FRONTEND
+    // RESPONSE TO FRONTEND
     // =====================================================
 
     return res.json({
 
-      // Current live sensor temperature
+      // ---------------------------------------------------
+      // Current temperature
+      // ---------------------------------------------------
+
       current,
 
       temperature:
         current,
 
 
+      // ---------------------------------------------------
       // Graph
+      // ---------------------------------------------------
+
       data,
 
 
-      // Projected min/max
+      // ---------------------------------------------------
+      // Projected range
+      // ---------------------------------------------------
+
       min:
         Number(
           min.toFixed(1)
@@ -357,44 +431,70 @@ router.get("/", async (req, res) => {
         ),
 
 
-      // Risk based on cooling level
+      // ---------------------------------------------------
+      // Risk
+      // ---------------------------------------------------
+
       risk,
 
 
+      // ---------------------------------------------------
       // Cooling
+      // ---------------------------------------------------
+
       coolingDecision,
 
-      coolingLevel,
+      coolingLevel:
+        safeCoolingLevel,
 
 
+      // ---------------------------------------------------
       // Peltier
+      // ---------------------------------------------------
+
       peltier,
 
 
+      // ---------------------------------------------------
       // Forecast
+      // ---------------------------------------------------
+
       futureTemperatures,
 
 
-      // ML trend
-      trend:
-        mlData.trend ||
-        "STABLE",
+      // ---------------------------------------------------
+      // Trend
+      // ---------------------------------------------------
+
+      trend,
 
 
-      mode:
-        mlData.mode ||
-        "ML_CONTROL",
+      // ---------------------------------------------------
+      // Mode
+      // ---------------------------------------------------
+
+      mode,
 
 
+      // ---------------------------------------------------
       // Outside temperature
+      // ---------------------------------------------------
+
       outsideTemperature:
         outsideTemp,
 
 
-      // Device
+      // ---------------------------------------------------
+      // Device status
+      // ---------------------------------------------------
+
       deviceConnected:
         true,
 
+
+      // ---------------------------------------------------
+      // Timestamp
+      // ---------------------------------------------------
 
       timestamp:
         mlData.timestamp ||
