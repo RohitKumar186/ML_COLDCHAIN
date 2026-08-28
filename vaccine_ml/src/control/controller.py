@@ -1,16 +1,21 @@
 from src.config import (
     PRE_COOLING_THRESHOLD,
-    STABLE_THRESHOLD
+    STABLE_THRESHOLD,
+    MIN_HISTORY_READINGS
 )
 
 
 def determine_mode(inside_temp):
 
     if inside_temp > PRE_COOLING_THRESHOLD:
-
         return "PRE_COOLING"
 
     return "ML_CONTROL"
+
+
+def has_enough_history(history_count):
+
+    return history_count >= MIN_HISTORY_READINGS
 
 
 def pre_cooling_action():
@@ -24,29 +29,27 @@ def pre_cooling_action():
 
 def cooling_action(level):
 
-    if level == 0:
+    level = int(level)
 
+    if level == 0:
         return {
             "cooling_level": 0,
             "peltier": "OFF",
             "fan": "OFF"
         }
 
-    elif level == 1:
-
+    if level == 1:
         return {
             "cooling_level": 1,
             "peltier": "LOW",
             "fan": "LOW"
         }
 
-    else:
-
-        return {
-            "cooling_level": 2,
-            "peltier": "HIGH",
-            "fan": "HIGH"
-        }
+    return {
+        "cooling_level": 2,
+        "peltier": "HIGH",
+        "fan": "HIGH"
+    }
 
 
 def determine_trend(
@@ -55,24 +58,22 @@ def determine_trend(
 ):
 
     if not future_temperatures:
-
         return "STABLE"
 
-    future_average = sum(
-        future_temperatures
-    ) / len(future_temperatures)
+    average_future = (
+        sum(future_temperatures)
+        / len(future_temperatures)
+    )
 
     difference = (
-        future_average
+        average_future
         - current_temperature
     )
 
     if difference > STABLE_THRESHOLD:
-
         return "UP"
 
-    elif difference < -STABLE_THRESHOLD:
-
+    if difference < -STABLE_THRESHOLD:
         return "DOWN"
 
     return "STABLE"

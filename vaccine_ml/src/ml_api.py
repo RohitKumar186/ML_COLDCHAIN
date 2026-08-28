@@ -1,152 +1,97 @@
 from flask import Flask, request, jsonify
-import random
+import sys
+import os
+
+# Project root ko Python path mein add karo
+BASE_DIR = os.path.dirname(
+    os.path.dirname(os.path.abspath(__file__))
+)
+
+if BASE_DIR not in sys.path:
+    sys.path.insert(0, BASE_DIR)
+
+from src.main import predict
+
 
 app = Flask(__name__)
 
 
 @app.route("/health", methods=["GET"])
 def health():
+
     return jsonify({
-        "status": "ML backend running",
-        "mode": "DUMMY"
+        "status": "ok",
+        "service": "vaccine-ml"
     })
 
 
 @app.route("/predict", methods=["POST"])
-def predict():
+def prediction():
 
     try:
+
         data = request.get_json()
 
-        inside_temp = float(data.get("inside_temp", 5.5))
-        outside_temp = float(data.get("outside_temp", 28.0))
+        if not data:
+            return jsonify({
+                "error": "No JSON data received"
+            }), 400
 
-        # -------------------------------------------------
-        # DUMMY FUTURE TEMPERATURE PREDICTION
-        # -------------------------------------------------
+        # -----------------------------
+        # Read sensor values
+        # -----------------------------
 
-        future_temperatures = []
-
-        temperature = inside_temp
-
-        for _ in range(6):
-
-            temperature += random.uniform(
-                -0.15,
-                0.30
-            )
-
-            temperature = max(
-                1.0,
-                min(9.5, temperature)
-            )
-
-            future_temperatures.append(
-                round(temperature, 1)
-            )
-
-        # -------------------------------------------------
-        # DUMMY COOLING DECISION
-        # -------------------------------------------------
-
-        if inside_temp >= 7.0:
-
-            cooling_level = 2
-            cooling_decision = "HIGH"
-            peltier = True
-
-        elif inside_temp >= 5.5:
-
-            cooling_level = 1
-            cooling_decision = "LOW"
-            peltier = True
-
-        else:
-
-            cooling_level = 0
-            cooling_decision = "OFF"
-            peltier = False
-
-        # -------------------------------------------------
-        # TREND
-        # -------------------------------------------------
-
-        if future_temperatures[-1] > inside_temp + 0.2:
-            trend = "RISING"
-
-        elif future_temperatures[-1] < inside_temp - 0.2:
-            trend = "FALLING"
-
-        else:
-            trend = "STABLE"
-
-        # -------------------------------------------------
-        # RISK
-        # -------------------------------------------------
-
-        minimum = min(
-            [inside_temp] + future_temperatures
+        inside_temp = data.get(
+            "inside_temperature",
+            data.get("inside_temp")
         )
 
-        maximum = max(
-            [inside_temp] + future_temperatures
+        outside_temp = data.get(
+            "outside_temperature",
+            data.get("outside_temp")
         )
 
-        if maximum > 8 or minimum < 2:
-            risk = "high"
+        if inside_temp is None:
+            return jsonify({
+                "error":
+                "inside_temperature is required"
+            }), 400
 
-        elif maximum > 7.4 or minimum < 2.6:
-            risk = "watch"
+        if outside_temp is None:
+            return jsonify({
+                "error":
+                "outside_temperature is required"
+            }), 400
 
-        else:
-            risk = "low"
+        inside_temp = float(
+            inside_temp
+        )
 
-        # -------------------------------------------------
-        # RESPONSE
-        # -------------------------------------------------
+        outside_temp = float(
+            outside_temp
+        )
 
-        return jsonify({
+        # -----------------------------
+        # Run ML system
+        # -----------------------------
 
-            "inside_temperature": inside_temp,
+        result = predict(
+            inside_temp=inside_temp,
+            outside_temp=outside_temp
+        )
 
-            "outside_temperature": outside_temp,
+        return jsonify(result)
 
-            "mode": "ML_CONTROL",
-
-            "future_temperatures":
-                future_temperatures,
-
-            "cooling_level":
-                cooling_level,
-
-            "cooling_decision":
-                cooling_decision,
-
-            "peltier":
-                peltier,
-
-            "trend":
-                trend,
-
-            "risk":
-                risk,
-
-            "timestamp":
-                __import__("datetime")
-                .datetime.now()
-                .isoformat()
-
-        })
-
-    except Exception as error:
+    except Exception as e:
 
         print(
             "Prediction error:",
-            error
+            str(e)
         )
 
         return jsonify({
-            "error": str(error)
+            "error": "Prediction failed",
+            "message": str(e)
         }), 500
 
 

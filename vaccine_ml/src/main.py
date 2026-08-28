@@ -1,58 +1,36 @@
+import os
 from datetime import datetime
 
 import pandas as pd
 
-from src.data.storage import (
-    save_sensor_data,
-    load_sensor_data
+from src.config import (
+    MIN_HISTORY_READINGS,
+    COOLING_MODEL_PATH,
+    TEMPERATURE_MODEL_PATH
 )
 
-from src.data.preprocessing import (
-    create_features,
-    create_cooling_dataset
-)
+from src.data.storage import load_sensor_data
+
+from src.data.preprocessing import create_features
 
 from src.models.cooling_model import (
-    train_cooling_model,
     load_cooling_model,
     predict_cooling_level,
     FEATURES as COOLING_FEATURES
 )
 
 from src.models.temperature_model import (
-    train_temperature_model,
     load_temperature_model,
     predict_future_temperature
 )
 
 from src.control.controller import (
     determine_mode,
+    has_enough_history,
     pre_cooling_action,
     cooling_action,
     determine_trend
 )
-
-
-def train_models():
-
-    print("\nPreparing training data...")
-
-    df = load_sensor_data()
-
-    create_cooling_dataset(df)
-
-    print("\nTraining cooling model...")
-
-    cooling_model = train_cooling_model()
-
-    print("\nTraining temperature model...")
-
-    temperature_model = train_temperature_model(
-        df
-    )
-
-    print("\nTraining completed.")
-
 
 def predict(
     inside_temp,
@@ -61,36 +39,27 @@ def predict(
 
     df = load_sensor_data()
 
-    # Add current reading temporarily
     current = pd.DataFrame([
         {
             "timestamp": datetime.now(),
             "inside_temp": inside_temp,
-            "outside_temp": outside_temp
+            "outside_temp": outside_temp,
+            "mode": determine_mode(inside_temp)
         }
     ])
 
     history = pd.concat(
-        [
-            df,
-            current
-        ],
+        [df, current],
         ignore_index=True
     )
-
-    history = create_features(
-        history
-    )
-
-    latest = history.iloc[-1:]
 
     mode = determine_mode(
         inside_temp
     )
 
-    # -------------------------
+    # =========================================
     # PRE-COOLING
-    # -------------------------
+    # =========================================
 
     if mode == "PRE_COOLING":
 
@@ -99,26 +68,106 @@ def predict(
         return {
             "inside_temperature": inside_temp,
             "outside_temperature": outside_temp,
-            "mode": mode,
+            "mode": "PRE_COOLING",
+            "prediction_status": "WAITING",
             **action
         }
 
-    # -------------------------
-    # ML CONTROL
-    # -------------------------
+    # =========================================
+    # ML HISTORY
+    # =========================================
 
-    cooling_model = load_cooling_model()
+    ml_history = history[
+        history["mode"] == "ML_CONTROL"
+    ].copy()
 
-    temperature_model = load_temperature_model()
+    history_count = len(
+        ml_history
+    )
+
+    if not has_enough_history(
+        history_count
+    ):
+
+        action = pre_cooling_action()
+
+        return {
+            "inside_temperature": inside_temp,
+            "outside_temperature": outside_temp,
+            "mode": "ML_CONTROL",
+            "prediction_status":
+                "COLLECTING_HISTORY",
+            "history_count":
+                history_count,
+            "required_history":
+                MIN_HISTORY_READINGS,
+            **action
+        }
+
+    # =========================================
+    # CHECK MODEL
+    # =========================================
+
+    if (
+        not os.path.exists(
+            COOLING_MODEL_PATH
+        )
+        or
+        not os.path.exists(
+            TEMPERATURE_MODEL_PATH
+        )
+    ):
+
+        return {
+            "inside_temperature": inside_temp,
+            "outside_temperature": outside_temp,
+            "mode": "ML_CONTROL",
+            "prediction_status":
+                "MODEL_NOT_TRAINED",
+            "history_count":
+                history_count,
+            "message":
+                "Collect training data and train models first."
+        }
+
+    # =========================================
+    # FEATURES
+    # =========================================
+
+    feature_history = create_features(
+        history
+    )
+
+    latest = feature_history.iloc[-1:]
 
     X = latest[
         COOLING_FEATURES
     ]
 
+    # =========================================
+    # LOAD XGBOOST MODELS
+    # =========================================
+
+    cooling_model = (
+        load_cooling_model()
+    )
+
+    temperature_model = (
+        load_temperature_model()
+    )
+
+    # =========================================
+    # COOLING LEVEL
+    # =========================================
+
     level = predict_cooling_level(
         cooling_model,
         X
     )
+
+    # =========================================
+    # FUTURE TEMPERATURES
+    # =========================================
 
     future_temperatures = (
         predict_future_temperature(
@@ -127,10 +176,18 @@ def predict(
         )
     )
 
+    # =========================================
+    # TREND
+    # =========================================
+
     trend = determine_trend(
         inside_temp,
         future_temperatures
     )
+
+    # =========================================
+    # ACTION
+    # =========================================
 
     action = cooling_action(
         level
@@ -139,60 +196,12 @@ def predict(
     return {
         "inside_temperature": inside_temp,
         "outside_temperature": outside_temp,
-        "mode": mode,
+        "mode": "ML_CONTROL",
+        "prediction_status": "ACTIVE",
         **action,
         "future_temperatures":
             future_temperatures,
-        "trend": trend
+        "trend": trend,
+        "history_count":
+            history_count
     }
-
-
-if __name__ == "__main__":
-
-    print(
-        "Vaccine Cooling ML System"
-    )
-
-    print(
-        "1. Train models"
-    )
-
-    print(
-        "2. Predict"
-    )
-
-    choice = input(
-        "\nSelect option: "
-    )
-
-    if choice == "1":
-
-        train_models()
-
-    elif choice == "2":
-
-        inside = float(
-            input(
-                "Inside temperature: "
-            )
-        )
-
-        outside = float(
-            input(
-                "Outside temperature: "
-            )
-        )
-
-        result = predict(
-            inside,
-            outside
-        )
-
-        print("\nPrediction")
-        print("================")
-
-        for key, value in result.items():
-
-            print(
-                f"{key}: {value}"
-            )
