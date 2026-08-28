@@ -30,46 +30,31 @@ async function request(endpoint, options = {}) {
   return response.json();
 }
 
-
-/* =========================================================
-   MONITORING
-========================================================= */
-
 export function getMonitoring() {
   return request("/monitoring");
 }
-
-
-/* =========================================================
-   HISTORY
-========================================================= */
 
 export function getHistory() {
   return request("/history");
 }
 
-
-/* =========================================================
-   PREDICTION
-========================================================= */
-
 export function getPrediction() {
   return request("/prediction");
 }
-
-
-/* =========================================================
-   INVENTORY
-========================================================= */
 
 export function getInventory() {
   return request("/inventory");
 }
 
-
 export function addInventoryLog(data) {
   return request("/inventory", {
     method: "POST",
     body: JSON.stringify(data),
+  });
+}
+
+export function deleteInventoryLog(id) {
+  return request(`/inventory/${id}`, {
+    method: "DELETE",
   });
 }
