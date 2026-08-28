@@ -8,7 +8,7 @@ import monitoringRouter from "./src/routes/monitoring.js";
 import historyRouter from "./src/routes/history.js";
 import predictionRouter from "./src/routes/prediction.js";
 import inventoryRouter from "./src/routes/inventory.js";
-import "./src/dummySensor.js";
+//import "./src/dummySensor.js";
 
 dotenv.config();
 
