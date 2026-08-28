@@ -5,6 +5,10 @@ from src.config import (
 )
 
 
+# =========================================================
+# MODE
+# =========================================================
+
 def determine_mode(inside_temp):
 
     if inside_temp > PRE_COOLING_THRESHOLD:
@@ -13,10 +17,19 @@ def determine_mode(inside_temp):
     return "ML_CONTROL"
 
 
+# =========================================================
+# HISTORY
+# =========================================================
+
 def has_enough_history(history_count):
 
     return history_count >= MIN_HISTORY_READINGS
 
+
+# =========================================================
+# PRE-COOLING ACTION
+# Temperature > 12°C
+# =========================================================
 
 def pre_cooling_action():
 
@@ -27,11 +40,37 @@ def pre_cooling_action():
     }
 
 
+# =========================================================
+# COOLING LEVEL FROM TEMPERATURE
+#
+# > 12°C  → Level 2
+# 8-12°C  → Level 1
+# < 8°C   → Level 0
+# =========================================================
+
+def determine_cooling_level(inside_temp):
+
+    inside_temp = float(inside_temp)
+
+    if inside_temp > 12:
+        return 2
+
+    if inside_temp >= 8:
+        return 1
+
+    return 0
+
+
+# =========================================================
+# COOLING ACTION
+# =========================================================
+
 def cooling_action(level):
 
     level = int(level)
 
-    if level == 0:
+    if level <= 0:
+
         return {
             "cooling_level": 0,
             "peltier": "OFF",
@@ -39,6 +78,7 @@ def cooling_action(level):
         }
 
     if level == 1:
+
         return {
             "cooling_level": 1,
             "peltier": "LOW",
@@ -51,6 +91,10 @@ def cooling_action(level):
         "fan": "HIGH"
     }
 
+
+# =========================================================
+# TREND
+# =========================================================
 
 def determine_trend(
     current_temperature,
