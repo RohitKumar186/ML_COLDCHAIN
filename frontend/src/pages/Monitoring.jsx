@@ -114,12 +114,6 @@ function FailureItem({
 
 export default function Monitoring() {
 
-  /*
-    IMPORTANT:
-    Do not use a fake starting temperature.
-    When ESP32 is disconnected, temperature stays null.
-  */
-
   const [temp, setTemp] = useState(null);
 
   const [outsideTemp, setOutsideTemp] =
@@ -135,6 +129,14 @@ export default function Monitoring() {
     useState(false);
 
   const [deviceConnected, setDeviceConnected] =
+    useState(false);
+
+  /*
+    IMPORTANT:
+    Power failure is different from
+    device disconnection.
+  */
+  const [powerFailure, setPowerFailure] =
     useState(false);
 
 
@@ -189,10 +191,23 @@ export default function Monitoring() {
 
 
       /* =================================================
+         POWER STATUS
+         
+         Power failure is NOT the same as
+         device being offline.
+      ================================================= */
+
+      const powerFailed =
+        data?.powerPresent === false;
+
+      setPowerFailure(powerFailed);
+
+
+      /* =================================================
          DEVICE OFFLINE
          
-         Backend returns null values when ESP32
-         has not sent data for more than 30 seconds.
+         Only actual device disconnection should
+         clear live sensor values.
       ================================================= */
 
       if (!connected) {
@@ -201,17 +216,17 @@ export default function Monitoring() {
 
         setOutsideTemp(null);
 
-        setVoltage(null);
+        /*
+          IMPORTANT:
+          Do NOT clear voltage here.
+          
+          If the backend still has the last
+          measured voltage, keep displaying it.
+        */
 
         setDoorOpen(false);
 
         setCoolingOn(false);
-
-
-        /*
-          Do NOT add anything to temperature history
-          while device is offline.
-        */
 
         setTemperatureFailure(false);
 
@@ -379,7 +394,7 @@ export default function Monitoring() {
 
       /*
         Backend itself is unreachable.
-        Treat all live systems as unavailable.
+        This is different from power failure.
       */
 
       setDeviceConnected(false);
@@ -393,6 +408,8 @@ export default function Monitoring() {
       setDoorOpen(false);
 
       setCoolingOn(false);
+
+      setPowerFailure(false);
 
       setTemperatureFailure(false);
 
@@ -504,7 +521,8 @@ export default function Monitoring() {
     !deviceConnected ||
     temperatureFailure ||
     voltageFailure ||
-    doorFailure;
+    doorFailure ||
+    powerFailure;
 
 
   /* =====================================================
@@ -566,6 +584,30 @@ export default function Monitoring() {
         </span>
 
       </div>
+
+
+      {/* =================================================
+          POWER FAILURE ALERT
+      ================================================= */}
+
+      {deviceConnected && powerFailure && (
+
+        <div className="alert warn">
+
+          <AlertTriangle size={14} />
+
+          <strong>
+            POWER FAILURE
+          </strong>
+
+          <span>
+            AC power supply is unavailable.
+            Sensor monitoring remains active.
+          </span>
+
+        </div>
+
+      )}
 
 
       {/* =================================================
@@ -652,7 +694,9 @@ export default function Monitoring() {
             className={`sensor-value ${tempStatus}`}
           >
 
-            {loading || !deviceConnected || temp === null
+            {loading ||
+            !deviceConnected ||
+            temp === null
               ? "—"
               : temp.toFixed(1)}
 
@@ -982,15 +1026,22 @@ export default function Monitoring() {
 
             <span
               className={`badge ${
-                deviceConnected
-                  ? "ok"
-                  : "bad"
+                !deviceConnected
+                  ? "bad"
+                  : powerFailure ||
+                    voltageFailure
+                  ? "bad"
+                  : "ok"
               }`}
             >
 
-              {deviceConnected
-                ? "LIVE"
-                : "OFFLINE"}
+              {!deviceConnected
+                ? "OFFLINE"
+                : powerFailure
+                ? "POWER FAILURE"
+                : voltageFailure
+                ? "FAULT"
+                : "LIVE"}
 
             </span>
 
@@ -999,8 +1050,7 @@ export default function Monitoring() {
 
           <div className="sensor-value">
 
-            {!deviceConnected ||
-            voltage === null
+            {voltage === null
               ? "—"
               : voltage.toFixed(1)}
 
@@ -1072,9 +1122,10 @@ export default function Monitoring() {
 
 
           <FailureItem
-            title="Voltage sensor"
+            title="Voltage / Power"
             failed={
-              voltageFailure
+              voltageFailure ||
+              powerFailure
             }
             offline={
               !deviceConnected
