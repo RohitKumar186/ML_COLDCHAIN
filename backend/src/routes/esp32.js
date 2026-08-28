@@ -13,21 +13,29 @@ const ML_URL =
 //   ↓
 // Node Backend
 //   ↓
-// PostgreSQL + ML
+// Flask ML
+//   ↓
+// PostgreSQL
+//
+// IMPORTANT:
+// ESP32 readings are stored in PostgreSQL.
+// Training dataset generation remains a separate step.
 // =========================================================
 
 router.post("/", async (req, res) => {
   try {
+
     const {
       inside_temperature,
       outside_temperature,
       voltage,
       power_present
-    } = req.body;
+    } = req.body || {};
 
-    // -----------------------------------------------------
-    // Validate sensor data
-    // -----------------------------------------------------
+
+    // =====================================================
+    // VALIDATION
+    // =====================================================
 
     if (
       inside_temperature == null ||
@@ -35,53 +43,149 @@ router.post("/", async (req, res) => {
       voltage == null ||
       power_present == null
     ) {
+
       return res.status(400).json({
-        error:
-          "Missing required sensor data"
+        error: "Missing required sensor data"
       });
+
     }
 
-    // -----------------------------------------------------
-    // Send temperatures to ML service
-    // -----------------------------------------------------
 
-    const mlResponse = await fetch(ML_URL, {
-      method: "POST",
+    const insideTemp =
+      Number(inside_temperature);
 
-      headers: {
-        "Content-Type": "application/json"
-      },
+    const outsideTemp =
+      Number(outside_temperature);
 
-      body: JSON.stringify({
-        inside_temperature:
-          Number(inside_temperature),
+    const voltageValue =
+      Number(voltage);
 
-        outside_temperature:
-          Number(outside_temperature)
-      })
-    });
+    const powerPresent =
+      Boolean(power_present);
+
+
+    if (
+      !Number.isFinite(insideTemp) ||
+      !Number.isFinite(outsideTemp) ||
+      !Number.isFinite(voltageValue)
+    ) {
+
+      return res.status(400).json({
+        error: "Invalid sensor values"
+      });
+
+    }
+
+
+    // =====================================================
+    // SEND TEMPERATURE TO ML SERVICE
+    // =====================================================
+
+    const mlResponse = await fetch(
+      ML_URL,
+      {
+        method: "POST",
+
+        headers: {
+          "Content-Type": "application/json"
+        },
+
+        body: JSON.stringify({
+
+          inside_temperature:
+            insideTemp,
+
+          outside_temperature:
+            outsideTemp
+
+        })
+      }
+    );
+
+
+    // =====================================================
+    // CHECK ML RESPONSE
+    // =====================================================
 
     if (!mlResponse.ok) {
+
       throw new Error(
         `ML API returned ${mlResponse.status}`
       );
+
     }
+
 
     const prediction =
       await mlResponse.json();
 
-    // -----------------------------------------------------
-    // Cooling status from ML decision
-    // -----------------------------------------------------
 
-    const coolingOn =
+    console.log(
+      "[ESP32 → ML]",
+      prediction
+    );
+
+
+    // =====================================================
+    // COOLING LEVEL
+    //
+    // 0 → OFF
+    // 1 → LOW
+    // 2 → HIGH
+    // =====================================================
+
+    const rawCoolingLevel =
       Number(
         prediction.cooling_level ?? 0
-      ) > 0;
+      );
 
-    // -----------------------------------------------------
-    // Save ESP32 reading
-    // -----------------------------------------------------
+
+    const coolingLevel =
+      [0, 1, 2].includes(
+        rawCoolingLevel
+      )
+        ? rawCoolingLevel
+        : 0;
+
+
+    // =====================================================
+    // COOLING STATUS
+    //
+    // Level 0 → OFF
+    // Level 1 → ON
+    // Level 2 → ON
+    // =====================================================
+
+    const coolingOn =
+      coolingLevel > 0;
+
+
+    // =====================================================
+    // PELTIER STATUS
+    //
+    // Cooling level is authoritative.
+    //
+    // Do NOT trust prediction.peltier.
+    // =====================================================
+
+    const peltier =
+      coolingOn
+        ? "ON"
+        : "OFF";
+
+
+    // =====================================================
+    // FAN STATUS
+    // =====================================================
+
+    const fan =
+      prediction.fan ||
+      (coolingOn ? "HIGH" : "OFF");
+
+
+    // =====================================================
+    // SAVE ESP32 READING
+    // =====================================================
 
     await pool.query(
       `
@@ -107,45 +211,60 @@ router.post("/", async (req, res) => {
       )
       `,
       [
-        Number(inside_temperature),
 
-        Number(outside_temperature),
+        insideTemp,
 
-        Number(voltage),
+        outsideTemp,
+
+        voltageValue,
 
         coolingOn,
 
-        Boolean(power_present)
+        powerPresent
+
       ]
     );
 
-    // -----------------------------------------------------
-    // Return ML decision to ESP32
-    // -----------------------------------------------------
 
-    res.json({
+    // =====================================================
+    // RESPONSE TO ESP32
+    // =====================================================
+
+    return res.json({
+
       success: true,
 
+
       inside_temperature:
-        Number(inside_temperature),
+        insideTemp,
+
 
       outside_temperature:
-        Number(outside_temperature),
+        outsideTemp,
+
 
       cooling_level:
-        Number(
-          prediction.cooling_level ?? 0
-        ),
+        coolingLevel,
 
-      peltier:
-        prediction.peltier || "OFF",
 
-      fan:
-        prediction.fan || "OFF",
+      cooling_decision:
+        coolingOn
+          ? "ON"
+          : "OFF",
+
+
+      peltier,
+
+
+      fan,
+
 
       trend:
-        prediction.trend || "STABLE"
+        prediction.trend ||
+        "STABLE"
+
     });
+
 
   } catch (error) {
 
@@ -154,14 +273,19 @@ router.post("/", async (req, res) => {
       error
     );
 
-    res.status(500).json({
+
+    return res.status(500).json({
+
       error:
         "Failed to process ESP32 data",
 
       message:
         error.message
+
     });
+
   }
 });
+
 
 export default router;
