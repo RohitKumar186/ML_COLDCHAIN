@@ -1,4 +1,4 @@
-const API_BASE = "http://localhost:4000/api";
+const API_BASE = "https://cold-chain-backend-8e6c.onrender.com";
 
 async function request(endpoint, options = {}) {
   const response = await fetch(`${API_BASE}${endpoint}`, {
@@ -35,7 +35,7 @@ async function request(endpoint, options = {}) {
 ========================================================= */
 
 export function getMonitoring() {
-  return request("/monitoring");
+  return request("/api/monitoring");
 }
 
 
@@ -44,7 +44,7 @@ export function getMonitoring() {
 ========================================================= */
 
 export function getHistory() {
-  return request("/history");
+  return request("/api/history");
 }
 
 
@@ -53,7 +53,7 @@ export function getHistory() {
 ========================================================= */
 
 export function getPrediction() {
-  return request("/prediction");
+  return request("/api/prediction");
 }
 
 
@@ -62,12 +62,12 @@ export function getPrediction() {
 ========================================================= */
 
 export function getInventory() {
-  return request("/inventory");
+  return request("/api/inventory");
 }
 
 
 export function addInventoryLog(data) {
-  return request("/inventory", {
+  return request("/api/inventory", {
     method: "POST",
     body: JSON.stringify(data),
   });
