@@ -27,7 +27,7 @@ router.get("/", async (req, res) => {
     // -------------------------------------------------
 
     const response = await fetch(
-      "http://localhost:8000/predict",
+      "https://cold-chain-ml.onrender.com/predict",
       {
         method: "POST",
 
