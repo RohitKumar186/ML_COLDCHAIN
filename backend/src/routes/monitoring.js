@@ -8,6 +8,19 @@ const router = Router();
   GET /api/monitoring
 
   Returns the latest sensor reading from PostgreSQL.
+
+  IMPORTANT:
+  ESP32 normally sends data every ~10 seconds.
+  If no new reading is received for 30 seconds,
+  the device is considered OFFLINE.
+
+  When OFFLINE:
+  - Temperature → null
+  - Outside temperature → null
+  - Voltage → null
+  - Cooling → OFF
+  - Door → false
+  - Device connected → false
   =========================================================
 */
 
@@ -28,30 +41,94 @@ router.get("/", async (req, res) => {
       LIMIT 1
     `);
 
+    // =====================================================
+    // NO SENSOR DATA
+    // =====================================================
+
     if (result.rows.length === 0) {
       return res.json({
         insideTemperature: null,
         outsideTemperature: null,
         voltage: null,
+
         doorOpen: false,
         coolingOn: false,
         deviceConnected: false,
+
         recordedAt: null,
       });
     }
 
     const row = result.rows[0];
 
-    res.json({
-      insideTemperature: Number(row.temperature),
-      outsideTemperature: Number(row.outside_temperature),
-      voltage: Number(row.voltage),
+    // =====================================================
+    // CHECK ESP32 CONNECTION
+    // =====================================================
 
-      doorOpen: row.door_open,
-      coolingOn: row.cooling_on,
-      deviceConnected: row.device_connected,
+    const recordedTime =
+      new Date(row.recorded_at).getTime();
 
-      recordedAt: row.recorded_at,
+    const currentTime = Date.now();
+
+    const ageInSeconds =
+      (currentTime - recordedTime) / 1000;
+
+    /*
+      ESP32 sends approximately every 10 seconds.
+
+      Allow 30 seconds before declaring
+      the device offline.
+    */
+
+    const deviceOnline =
+      ageInSeconds <= 30 &&
+      row.device_connected === true;
+
+    // =====================================================
+    // ESP32 OFFLINE
+    // =====================================================
+
+    if (!deviceOnline) {
+      return res.json({
+        insideTemperature: null,
+        outsideTemperature: null,
+        voltage: null,
+
+        doorOpen: false,
+        coolingOn: false,
+
+        deviceConnected: false,
+
+        recordedAt: row.recorded_at,
+      });
+    }
+
+    // =====================================================
+    // ESP32 ONLINE
+    // =====================================================
+
+    return res.json({
+      insideTemperature:
+        Number(row.temperature),
+
+      outsideTemperature:
+        Number(row.outside_temperature),
+
+      voltage:
+        row.voltage !== null
+          ? Number(row.voltage)
+          : null,
+
+      doorOpen:
+        row.door_open,
+
+      coolingOn:
+        row.cooling_on,
+
+      deviceConnected: true,
+
+      recordedAt:
+        row.recorded_at,
     });
 
   } catch (error) {
@@ -72,25 +149,26 @@ router.get("/", async (req, res) => {
   POST /api/monitoring
 
   ESP32 → Node Backend → PostgreSQL
+
+  Stores sensor readings.
   =========================================================
 */
 
 router.post("/", async (req, res) => {
   try {
-
     const {
       inside_temperature,
       outside_temperature,
       voltage,
       door_open,
       cooling_on,
-      device_connected
+      device_connected,
     } = req.body;
 
 
-    // -----------------------------------------------------
-    // Validate required values
-    // -----------------------------------------------------
+    // =====================================================
+    // VALIDATION
+    // =====================================================
 
     if (
       inside_temperature === undefined ||
@@ -98,14 +176,14 @@ router.post("/", async (req, res) => {
     ) {
       return res.status(400).json({
         error:
-          "inside_temperature and outside_temperature are required"
+          "inside_temperature and outside_temperature are required",
       });
     }
 
 
-    // -----------------------------------------------------
-    // Insert sensor reading
-    // -----------------------------------------------------
+    // =====================================================
+    // INSERT SENSOR READING
+    // =====================================================
 
     const result = await pool.query(
       `
@@ -139,13 +217,18 @@ router.post("/", async (req, res) => {
       `,
       [
         Number(inside_temperature),
+
         Number(outside_temperature),
+
         voltage !== undefined
           ? Number(voltage)
           : null,
+
         door_open ?? false,
+
         cooling_on ?? false,
-        device_connected ?? true
+
+        device_connected ?? true,
       ]
     );
 
@@ -153,12 +236,13 @@ router.post("/", async (req, res) => {
     const row = result.rows[0];
 
 
-    // -----------------------------------------------------
-    // Response to ESP32
-    // -----------------------------------------------------
+    // =====================================================
+    // RESPONSE
+    // =====================================================
 
-    res.status(201).json({
-      message: "Sensor reading stored successfully",
+    return res.status(201).json({
+      message:
+        "Sensor reading stored successfully",
 
       data: {
         insideTemperature:
@@ -182,12 +266,11 @@ router.post("/", async (req, res) => {
           row.device_connected,
 
         recordedAt:
-          row.recorded_at
-      }
+          row.recorded_at,
+      },
     });
 
   } catch (error) {
-
     console.error(
       "POST /api/monitoring error:",
       error
@@ -195,7 +278,7 @@ router.post("/", async (req, res) => {
 
     res.status(500).json({
       error: "Failed to store monitoring data",
-      details: error.message
+      details: error.message,
     });
   }
 });
