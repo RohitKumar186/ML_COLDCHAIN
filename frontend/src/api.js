@@ -1,4 +1,4 @@
-const API_BASE = "https://cold-chain-backend-8e6c.onrender.com";
+const API_BASE = "https://cold-chain-backend-8e6c.onrender.com/api";
 
 async function request(endpoint, options = {}) {
   const response = await fetch(`${API_BASE}${endpoint}`, {
