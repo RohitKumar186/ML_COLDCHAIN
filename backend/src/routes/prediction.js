@@ -66,7 +66,6 @@ router.get("/", async (req, res) => {
     const ageInSeconds =
       (currentTime - recordedTime) / 1000;
 
-
     const deviceOnline =
       ageInSeconds <= 30 &&
       row.device_connected === true;
@@ -108,8 +107,8 @@ router.get("/", async (req, res) => {
 
         deviceConnected: false,
 
-        timestamp:
-          row.recorded_at,
+        timestamp: row.recorded_at,
+
       });
     }
 
@@ -135,8 +134,7 @@ router.get("/", async (req, res) => {
     ) {
 
       return res.status(500).json({
-        error:
-          "Invalid temperature data",
+        error: "Invalid temperature data",
       });
 
     }
@@ -152,8 +150,7 @@ router.get("/", async (req, res) => {
         method: "POST",
 
         headers: {
-          "Content-Type":
-            "application/json",
+          "Content-Type": "application/json",
         },
 
         body: JSON.stringify({
@@ -193,6 +190,35 @@ router.get("/", async (req, res) => {
 
 
     // =====================================================
+    // COOLING LEVEL
+    // =====================================================
+
+    const coolingLevel =
+      Number(
+        mlData.cooling_level ?? 0
+      );
+
+
+    // =====================================================
+    // RISK BASED ON COOLING LEVEL
+    //
+    // 0 → LOW
+    // 1 → MEDIUM
+    // 2 → HIGH
+    // =====================================================
+
+    let risk;
+
+    if (coolingLevel === 0) {
+      risk = "low";
+    } else if (coolingLevel === 1) {
+      risk = "medium";
+    } else {
+      risk = "high";
+    }
+
+
+    // =====================================================
     // FUTURE TEMPERATURES
     // =====================================================
 
@@ -208,9 +234,6 @@ router.get("/", async (req, res) => {
 
     // =====================================================
     // CURRENT TEMPERATURE
-    //
-    // ALWAYS use actual PostgreSQL sensor value.
-    // Do NOT use old/hardcoded ML value.
     // =====================================================
 
     const current =
@@ -250,7 +273,7 @@ router.get("/", async (req, res) => {
     const data = [];
 
 
-    // Current temperature
+    // Current point
     data.push({
       x: "Now",
       temp: current,
@@ -276,6 +299,33 @@ router.get("/", async (req, res) => {
 
       }
     );
+
+
+    // =====================================================
+    // PELTIER STATUS
+    // =====================================================
+
+    /*
+      ML may return:
+        true / false
+        "ON" / "OFF"
+
+      Handle both correctly.
+    */
+
+    const peltier =
+      mlData.peltier === true ||
+      mlData.peltier === "ON";
+
+
+    // =====================================================
+    // COOLING DECISION
+    // =====================================================
+
+    const coolingDecision =
+      coolingLevel > 0
+        ? "ON"
+        : "OFF";
 
 
     // =====================================================
@@ -307,32 +357,25 @@ router.get("/", async (req, res) => {
         ),
 
 
-      // ML output
-      risk:
-        mlData.risk ||
-        "low",
+      // Risk based on cooling level
+      risk,
 
 
-      coolingDecision:
-        mlData.cooling_decision ||
-        "OFF",
+      // Cooling
+      coolingDecision,
+
+      coolingLevel,
 
 
-      coolingLevel:
-        Number(
-          mlData.cooling_level ?? 0
-        ),
+      // Peltier
+      peltier,
 
 
-      peltier:
-        Boolean(
-          mlData.peltier
-        ),
-
-
+      // Forecast
       futureTemperatures,
 
 
+      // ML trend
       trend:
         mlData.trend ||
         "STABLE",
@@ -343,10 +386,12 @@ router.get("/", async (req, res) => {
         "ML_CONTROL",
 
 
+      // Outside temperature
       outsideTemperature:
         outsideTemp,
 
 
+      // Device
       deviceConnected:
         true,
 
