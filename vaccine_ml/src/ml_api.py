@@ -2,13 +2,19 @@ from flask import Flask, request, jsonify
 import sys
 import os
 
-# Project root ko Python path mein add karo
+# =========================================================
+# PROJECT ROOT
+# =========================================================
+
 BASE_DIR = os.path.dirname(
-    os.path.dirname(os.path.abspath(__file__))
+    os.path.dirname(
+        os.path.abspath(__file__)
+    )
 )
 
 if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
+
 
 from src.main import predict
 
@@ -16,7 +22,14 @@ from src.main import predict
 app = Flask(__name__)
 
 
-@app.route("/health", methods=["GET"])
+# =========================================================
+# HEALTH CHECK
+# =========================================================
+
+@app.route(
+    "/health",
+    methods=["GET"]
+)
 def health():
 
     return jsonify({
@@ -25,43 +38,84 @@ def health():
     })
 
 
-@app.route("/predict", methods=["POST"])
+# =========================================================
+# PREDICTION
+#
+# Node Backend
+#      ↓
+# Current sensor values
+#      +
+# Recent PostgreSQL history
+#      ↓
+# Flask ML
+# =========================================================
+
+@app.route(
+    "/predict",
+    methods=["POST"]
+)
 def prediction():
 
     try:
 
         data = request.get_json()
 
+
+        # -------------------------------------------------
+        # Validate JSON
+        # -------------------------------------------------
+
         if not data:
+
             return jsonify({
-                "error": "No JSON data received"
+                "error":
+                    "No JSON data received"
             }), 400
 
-        # -----------------------------
-        # Read sensor values
-        # -----------------------------
+
+        # -------------------------------------------------
+        # Current inside temperature
+        # -------------------------------------------------
 
         inside_temp = data.get(
             "inside_temperature",
             data.get("inside_temp")
         )
 
+
+        # -------------------------------------------------
+        # Current outside temperature
+        # -------------------------------------------------
+
         outside_temp = data.get(
             "outside_temperature",
             data.get("outside_temp")
         )
 
+
+        # -------------------------------------------------
+        # Required validation
+        # -------------------------------------------------
+
         if inside_temp is None:
+
             return jsonify({
                 "error":
-                "inside_temperature is required"
+                    "inside_temperature is required"
             }), 400
 
+
         if outside_temp is None:
+
             return jsonify({
                 "error":
-                "outside_temperature is required"
+                    "outside_temperature is required"
             }), 400
+
+
+        # -------------------------------------------------
+        # Convert sensor values
+        # -------------------------------------------------
 
         inside_temp = float(
             inside_temp
@@ -71,16 +125,72 @@ def prediction():
             outside_temp
         )
 
-        # -----------------------------
-        # Run ML system
-        # -----------------------------
 
-        result = predict(
-            inside_temp=inside_temp,
-            outside_temp=outside_temp
+        # -------------------------------------------------
+        # Recent sensor history
+        #
+        # This comes from Node backend.
+        # Node gets it from PostgreSQL.
+        # -------------------------------------------------
+
+        history = data.get(
+            "history",
+            []
         )
 
-        return jsonify(result)
+
+        if not isinstance(
+            history,
+            list
+        ):
+
+            history = []
+
+
+        # -------------------------------------------------
+        # Run ML prediction
+        # -------------------------------------------------
+
+        result = predict(
+
+            inside_temp=
+                inside_temp,
+
+            outside_temp=
+                outside_temp,
+
+            history=
+                history
+
+        )
+
+
+        # -------------------------------------------------
+        # Return prediction
+        # -------------------------------------------------
+
+        return jsonify(
+            result
+        )
+
+
+    except ValueError as e:
+
+        print(
+            "Invalid sensor value:",
+            str(e)
+        )
+
+        return jsonify({
+
+            "error":
+                "Invalid sensor data",
+
+            "message":
+                str(e)
+
+        }), 400
+
 
     except Exception as e:
 
@@ -90,15 +200,28 @@ def prediction():
         )
 
         return jsonify({
-            "error": "Prediction failed",
-            "message": str(e)
+
+            "error":
+                "Prediction failed",
+
+            "message":
+                str(e)
+
         }), 500
 
+
+# =========================================================
+# LOCAL DEVELOPMENT
+# =========================================================
 
 if __name__ == "__main__":
 
     app.run(
+
         host="0.0.0.0",
+
         port=8000,
+
         debug=True
+
     )

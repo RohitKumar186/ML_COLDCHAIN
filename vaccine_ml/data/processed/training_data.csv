@@ -1,1 +1,1 @@
-timestamp,temperature,humidity,battery_voltage,target_temperature
+timestamp,inside_temp,outside_temp,cooling_level,mode,inside_lag_1,inside_lag_5,outside_lag_1,outside_lag_5,inside_change_1,inside_change_5,outside_change_1,outside_change_5,hour,minute
