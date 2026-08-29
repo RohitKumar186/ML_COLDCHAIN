@@ -1,4 +1,8 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, {
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 
 import {
   Thermometer,
@@ -21,6 +25,10 @@ import "../css/monitoring.css";
 
 import { getMonitoring } from "../api";
 
+
+// =========================================================
+// TIME RANGE OPTIONS
+// =========================================================
 
 const timeOptions = [
   {
@@ -46,9 +54,9 @@ const timeOptions = [
 ];
 
 
-/* =====================================================
-   FAILURE ITEM
-===================================================== */
+// =========================================================
+// FAILURE ITEM
+// =========================================================
 
 function FailureItem({
   title,
@@ -64,15 +72,12 @@ function FailureItem({
             : "working"
         }`}
       >
-
         {failed ? (
           <AlertTriangle size={16} />
         ) : (
           <CheckCircle2 size={16} />
         )}
-
       </div>
-
 
       <div className="failure-info">
 
@@ -87,11 +92,9 @@ function FailureItem({
               : "working-text"
           }
         >
-
           {failed
             ? "Failure detected"
             : "Working normally"}
-
         </span>
 
       </div>
@@ -101,17 +104,15 @@ function FailureItem({
 }
 
 
-/* =====================================================
-   MONITORING PAGE
-===================================================== */
+// =========================================================
+// MONITORING PAGE
+// =========================================================
 
 export default function Monitoring() {
 
-  /*
-    IMPORTANT:
-    Do not use a fake starting temperature.
-    When ESP32 is disconnected, temperature stays null.
-  */
+  // =======================================================
+  // SENSOR VALUES
+  // =======================================================
 
   const [temp, setTemp] =
     useState(null);
@@ -123,31 +124,49 @@ export default function Monitoring() {
     useState(null);
 
   const [doorOpen, setDoorOpen] =
-    useState(false);
+    useState(null);
 
   const [coolingOn, setCoolingOn] =
     useState(false);
+
+
+  // =======================================================
+  // DEVICE STATE
+  // =======================================================
 
   const [deviceConnected, setDeviceConnected] =
     useState(false);
 
 
+  // =======================================================
+  // SENSOR FAILURE STATES
+  // =======================================================
+
+  const [temperatureFailure, setTemperatureFailure] =
+    useState(true);
+
+  const [voltageFailure, setVoltageFailure] =
+    useState(true);
+
+  const [doorFailure, setDoorFailure] =
+    useState(true);
+
+
+  // =======================================================
+  // TEMPERATURE HISTORY
+  // =======================================================
+
   const [tempHistory, setTempHistory] =
     useState([]);
+
 
   const [graphRange, setGraphRange] =
     useState("10m");
 
 
-  const [temperatureFailure, setTemperatureFailure] =
-    useState(false);
-
-  const [voltageFailure, setVoltageFailure] =
-    useState(false);
-
-  const [doorFailure, setDoorFailure] =
-    useState(false);
-
+  // =======================================================
+  // UI
+  // =======================================================
 
   const [loading, setLoading] =
     useState(true);
@@ -156,9 +175,9 @@ export default function Monitoring() {
     useState("");
 
 
-  /* =====================================================
-     FETCH MONITORING DATA
-  ===================================================== */
+  // =======================================================
+  // LOAD MONITORING DATA
+  // =======================================================
 
   const loadMonitoring = async () => {
 
@@ -167,32 +186,36 @@ export default function Monitoring() {
       const data =
         await getMonitoring();
 
-
       console.log(
         "Monitoring API:",
         data
       );
 
 
-      /* =================================================
-         DEVICE CONNECTION
-      ================================================= */
+      // ===================================================
+      // DEVICE CONNECTION
+      // ===================================================
 
       const connected =
         data?.deviceConnected === true;
-
 
       setDeviceConnected(
         connected
       );
 
 
-      /* =================================================
-         DEVICE OFFLINE
-         
-         Backend returns null values when ESP32
-         has not sent data for more than 30 seconds.
-      ================================================= */
+      // ===================================================
+      // COMPLETE DEVICE OFFLINE
+      //
+      // If ESP32/device itself is offline:
+      //
+      // Temperature → FAILURE
+      // Voltage     → FAILURE
+      // Door        → FAILURE
+      //
+      // This is intentionally different from an
+      // individual sensor failure.
+      // ===================================================
 
       if (!connected) {
 
@@ -202,21 +225,17 @@ export default function Monitoring() {
 
         setVoltage(null);
 
-        setDoorOpen(false);
+        setDoorOpen(null);
 
         setCoolingOn(false);
 
 
-        /*
-          Do NOT add anything to temperature history
-          while device is offline.
-        */
+        setTemperatureFailure(true);
 
-        setTemperatureFailure(false);
+        setVoltageFailure(true);
 
-        setVoltageFailure(false);
+        setDoorFailure(true);
 
-        setDoorFailure(false);
 
         setBackendError("");
 
@@ -226,9 +245,9 @@ export default function Monitoring() {
       }
 
 
-      /* =================================================
-         INSIDE TEMPERATURE
-      ================================================= */
+      // ===================================================
+      // TEMPERATURE
+      // ===================================================
 
       const temperatureValue =
         data?.insideTemperature !== null &&
@@ -239,52 +258,72 @@ export default function Monitoring() {
           : null;
 
 
-      if (
-        temperatureValue !== null &&
-        Number.isFinite(
+      const temperatureFault =
+        data?.temperatureFailure === true ||
+        temperatureValue === null ||
+        !Number.isFinite(
           temperatureValue
-        )
-      ) {
+        );
+
+
+      setTemperatureFailure(
+        temperatureFault
+      );
+
+
+      if (!temperatureFault) {
 
         setTemp(
           temperatureValue
         );
 
 
+        // ===============================================
+        // ADD CURRENT VALUE TO GRAPH HISTORY
+        // ===============================================
+
         setTempHistory(
-          (history) => [
+          (history) => {
 
-            ...history.slice(-119),
+            const now =
+              new Date();
 
-            {
-              time:
-                new Date()
-                  .toLocaleTimeString(
-                    [],
-                    {
-                      hour: "2-digit",
-                      minute: "2-digit",
-                      second: "2-digit",
-                    }
-                  ),
+            const time =
+              now.toLocaleTimeString(
+                [],
+                {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                  second: "2-digit",
+                }
+              );
 
-              value:
-                temperatureValue,
-            },
 
-          ]
+            return [
+              ...history.slice(-119),
+
+              {
+                time,
+                value:
+                  temperatureValue,
+              },
+            ];
+
+          }
         );
 
       } else {
 
-        setTemp(null);
+        // Only temperature becomes unavailable.
+        // Voltage and door continue independently.
 
+        setTemp(null);
       }
 
 
-      /* =================================================
-         OUTSIDE TEMPERATURE
-      ================================================= */
+      // ===================================================
+      // OUTSIDE TEMPERATURE
+      // ===================================================
 
       const outsideTemperatureValue =
         data?.outsideTemperature !== null &&
@@ -313,9 +352,9 @@ export default function Monitoring() {
       }
 
 
-      /* =================================================
-         VOLTAGE
-      ================================================= */
+      // ===================================================
+      // VOLTAGE
+      // ===================================================
 
       const voltageValue =
         data?.voltage !== null &&
@@ -326,12 +365,21 @@ export default function Monitoring() {
           : null;
 
 
-      if (
-        voltageValue !== null &&
-        Number.isFinite(
+      const voltageFault =
+        data?.voltageFailure === true ||
+        voltageValue === null ||
+        !Number.isFinite(
           voltageValue
-        )
-      ) {
+        ) ||
+        voltageValue <= 0;
+
+
+      setVoltageFailure(
+        voltageFault
+      );
+
+
+      if (!voltageFault) {
 
         setVoltage(
           voltageValue
@@ -344,72 +392,44 @@ export default function Monitoring() {
       }
 
 
-      /* =================================================
-         DEVICE STATES
-      ================================================= */
+      // ===================================================
+      // DOOR SENSOR
+      // ===================================================
 
-      setDoorOpen(
-        Boolean(
-          data?.doorOpen
-        )
+      const doorFault =
+        data?.doorFailure === true ||
+        data?.doorOpen === null ||
+        data?.doorOpen === undefined;
+
+
+      setDoorFailure(
+        doorFault
       );
 
+
+      if (!doorFault) {
+
+        setDoorOpen(
+          Boolean(
+            data.doorOpen
+          )
+        );
+
+      } else {
+
+        setDoorOpen(null);
+
+      }
+
+
+      // ===================================================
+      // COOLING
+      // ===================================================
 
       setCoolingOn(
         Boolean(
           data?.coolingOn
         )
-      );
-
-
-      /* =================================================
-         FAILURE DETECTION
-      ================================================= */
-
-      const temperatureFault =
-        data?.temperatureFailure === true;
-
-
-      /*
-        POWER FAILURE RULE:
-
-        0 V or below
-             OR
-        powerPresent === false
-             OR
-        backend explicitly reports voltage failure
-
-        => Voltage failure
-      */
-
-      const voltageFault =
-        data?.voltageFailure === true ||
-        data?.powerPresent === false ||
-        voltageValue === null ||
-        (
-          Number.isFinite(
-            voltageValue
-          ) &&
-          voltageValue <= 0
-        );
-
-
-      const doorFault =
-        data?.doorFailure === true;
-
-
-      setTemperatureFailure(
-        temperatureFault
-      );
-
-
-      setVoltageFailure(
-        voltageFault
-      );
-
-
-      setDoorFailure(
-        doorFault
       );
 
 
@@ -425,10 +445,11 @@ export default function Monitoring() {
       );
 
 
-      /*
-        Backend itself is unreachable.
-        Treat all live systems as unavailable.
-      */
+      // ===================================================
+      // BACKEND / DEVICE UNAVAILABLE
+      //
+      // Treat all critical sensors as failed.
+      // ===================================================
 
       setDeviceConnected(false);
 
@@ -438,15 +459,16 @@ export default function Monitoring() {
 
       setVoltage(null);
 
-      setDoorOpen(false);
+      setDoorOpen(null);
 
       setCoolingOn(false);
 
-      setTemperatureFailure(false);
 
-      setVoltageFailure(false);
+      setTemperatureFailure(true);
 
-      setDoorFailure(false);
+      setVoltageFailure(true);
+
+      setDoorFailure(true);
 
 
       setBackendError(
@@ -458,9 +480,11 @@ export default function Monitoring() {
   };
 
 
-  /* =====================================================
-     INITIAL LOAD + LIVE POLLING
-  ===================================================== */
+  // =======================================================
+  // LIVE POLLING
+  //
+  // Check every 5 seconds.
+  // =======================================================
 
   useEffect(() => {
 
@@ -477,48 +501,49 @@ export default function Monitoring() {
 
 
     return () => {
-      clearInterval(interval);
+
+      clearInterval(
+        interval
+      );
+
     };
 
   }, []);
 
 
-  /* =====================================================
-     GRAPH DATA
-  ===================================================== */
+  // =======================================================
+  // GRAPH DATA
+  // =======================================================
 
   const graphData =
-    useMemo(
-      () => {
+    useMemo(() => {
 
-        const selectedOption =
-          timeOptions.find(
-            (option) =>
-              option.key ===
-              graphRange
-          );
-
-
-        const points =
-          selectedOption?.points ||
-          10;
-
-
-        return tempHistory.slice(
-          -points
+      const selectedOption =
+        timeOptions.find(
+          (option) =>
+            option.key ===
+            graphRange
         );
 
-      },
-      [
-        tempHistory,
-        graphRange,
-      ]
-    );
+
+      const points =
+        selectedOption?.points ||
+        10;
 
 
-  /* =====================================================
-     MIN / MAX
-  ===================================================== */
+      return tempHistory.slice(
+        -points
+      );
+
+    }, [
+      tempHistory,
+      graphRange,
+    ]);
+
+
+  // =======================================================
+  // MIN / MAX
+  // =======================================================
 
   const values =
     graphData.map(
@@ -529,7 +554,8 @@ export default function Monitoring() {
 
   const lowest =
     deviceConnected &&
-    values.length
+    !temperatureFailure &&
+    values.length > 0
       ? Math.min(
           ...values
         )
@@ -538,31 +564,32 @@ export default function Monitoring() {
 
   const highest =
     deviceConnected &&
-    values.length
+    !temperatureFailure &&
+    values.length > 0
       ? Math.max(
           ...values
         )
       : null;
 
 
-  /* =====================================================
-     TEMPERATURE STATUS
-  ===================================================== */
+  // =======================================================
+  // TEMPERATURE STATUS
+  // =======================================================
 
   const tempStatus =
-    !deviceConnected
+    !deviceConnected ||
+    temperatureFailure
       ? "bad"
       : temp !== null &&
         temp >= 2 &&
-        temp <= 8 &&
-        !temperatureFailure
+        temp <= 8
       ? "ok"
       : "bad";
 
 
-  /* =====================================================
-     OVERALL FAILURE STATUS
-  ===================================================== */
+  // =======================================================
+  // OVERALL FAILURE
+  // =======================================================
 
   const anyFailure =
     !deviceConnected ||
@@ -571,9 +598,9 @@ export default function Monitoring() {
     doorFailure;
 
 
-  /* =====================================================
-     UI
-  ===================================================== */
+  // =======================================================
+  // RENDER
+  // =======================================================
 
   return (
     <div>
@@ -591,11 +618,9 @@ export default function Monitoring() {
             01 · LIVE SYSTEM
           </div>
 
-
           <h1 className="page-title">
             Real-Time Monitoring
           </h1>
-
 
           <p className="page-desc">
             Live temperature conditions and
@@ -605,6 +630,8 @@ export default function Monitoring() {
 
         </div>
 
+
+        {/* OVERALL STATUS */}
 
         <span
           className={`badge ${
@@ -621,11 +648,11 @@ export default function Monitoring() {
           )}
 
 
-          {deviceConnected
-            ? anyFailure
-              ? "Attention required"
-              : "System healthy"
-            : "Device offline"}
+          {!deviceConnected
+            ? "Device offline"
+            : anyFailure
+            ? "Attention required"
+            : "System healthy"}
 
         </span>
 
@@ -650,7 +677,7 @@ export default function Monitoring() {
 
 
       {/* =================================================
-          TEMPERATURE + GRAPH
+          TEMPERATURE + HISTORY
       ================================================= */}
 
       <div className="monitoring-main">
@@ -680,7 +707,6 @@ export default function Monitoring() {
                   Temperature
                 </h3>
 
-
                 <div className="card-sub">
                   Core sensor · safe 2–8°C
                 </div>
@@ -691,7 +717,9 @@ export default function Monitoring() {
 
 
             <span
-              className={`badge ${tempStatus}`}
+              className={`badge ${
+                tempStatus
+              }`}
             >
 
               {!deviceConnected
@@ -709,9 +737,7 @@ export default function Monitoring() {
           </div>
 
 
-          {/* =================================================
-              CURRENT TEMPERATURE
-          ================================================= */}
+          {/* CURRENT VALUE */}
 
           <div
             className={`sensor-value ${
@@ -720,7 +746,6 @@ export default function Monitoring() {
           >
 
             {loading ||
-            !deviceConnected ||
             temp === null
               ? "—"
               : temp.toFixed(1)}
@@ -732,9 +757,7 @@ export default function Monitoring() {
           </div>
 
 
-          {/* =================================================
-              MIN / MAX
-          ================================================= */}
+          {/* MIN / MAX */}
 
           <div className="sensor-minmax">
 
@@ -743,7 +766,6 @@ export default function Monitoring() {
               <span>
                 Lowest
               </span>
-
 
               <b>
 
@@ -762,7 +784,6 @@ export default function Monitoring() {
                 Highest
               </span>
 
-
               <b>
 
                 {highest === null
@@ -776,16 +797,13 @@ export default function Monitoring() {
           </div>
 
 
-          {/* =================================================
-              SAFE RANGE
-          ================================================= */}
+          {/* SAFE RANGE */}
 
           <div className="temperature-range">
 
             <span>
               Safe operating range
             </span>
-
 
             <strong>
               2°C — 8°C
@@ -797,7 +815,7 @@ export default function Monitoring() {
 
 
         {/* =================================================
-            TEMPERATURE GRAPH
+            TEMPERATURE HISTORY
         ================================================= */}
 
         <div className="card temperature-chart-card">
@@ -811,7 +829,6 @@ export default function Monitoring() {
                 Temperature History
               </h3>
 
-
               <div className="card-sub">
                 Historical temperature readings
               </div>
@@ -821,7 +838,8 @@ export default function Monitoring() {
 
             <span className="chart-live">
 
-              {deviceConnected
+              {deviceConnected &&
+              !temperatureFailure
                 ? "LIVE"
                 : "OFFLINE"}
 
@@ -830,9 +848,7 @@ export default function Monitoring() {
           </div>
 
 
-          {/* =================================================
-              TIME RANGE
-          ================================================= */}
+          {/* RANGE SELECTOR */}
 
           <div className="range-selector">
 
@@ -865,9 +881,7 @@ export default function Monitoring() {
           </div>
 
 
-          {/* =================================================
-              GRAPH
-          ================================================= */}
+          {/* CHART */}
 
           <div className="monitor-chart">
 
@@ -937,9 +951,7 @@ export default function Monitoring() {
           </div>
 
 
-          {/* =================================================
-              GRAPH FOOTER
-          ================================================= */}
+          {/* CHART FOOTER */}
 
           <div className="chart-footer">
 
@@ -961,6 +973,7 @@ export default function Monitoring() {
               <b>
 
                 {!deviceConnected ||
+                temperatureFailure ||
                 temp === null
                   ? "—"
                   : `${temp.toFixed(1)}°C`}
@@ -997,7 +1010,6 @@ export default function Monitoring() {
                 Outside Temperature
               </h3>
 
-
               <div className="card-sub">
                 DHT22 external temperature sensor
               </div>
@@ -1007,15 +1019,17 @@ export default function Monitoring() {
 
             <span
               className={`badge ${
-                deviceConnected
-                  ? "ok"
-                  : "bad"
+                !deviceConnected ||
+                outsideTemp === null
+                  ? "bad"
+                  : "ok"
               }`}
             >
 
-              {deviceConnected
-                ? "LIVE"
-                : "OFFLINE"}
+              {!deviceConnected ||
+              outsideTemp === null
+                ? "OFFLINE"
+                : "LIVE"}
 
             </span>
 
@@ -1052,17 +1066,12 @@ export default function Monitoring() {
                 Voltage
               </h3>
 
-
               <div className="card-sub">
                 AC supply monitoring
               </div>
 
             </div>
 
-
-            {/* =============================================
-                VOLTAGE STATUS
-            ============================================= */}
 
             <span
               className={`badge ${
@@ -1087,6 +1096,7 @@ export default function Monitoring() {
           <div className="sensor-value">
 
             {!deviceConnected ||
+            voltageFailure ||
             voltage === null
               ? "—"
               : voltage.toFixed(1)}
@@ -1117,13 +1127,14 @@ export default function Monitoring() {
               Failure Detection
             </h3>
 
-
             <div className="card-sub">
               Current status of critical monitoring sensors
             </div>
 
           </div>
 
+
+          {/* OVERALL FAILURE STATUS */}
 
           <span
             className={`badge ${
@@ -1133,39 +1144,52 @@ export default function Monitoring() {
             }`}
           >
 
-            {deviceConnected
-              ? anyFailure
-                ? "Failure detected"
-                : "All systems normal"
-              : "Device offline"}
+            {!deviceConnected
+              ? "Device offline"
+              : anyFailure
+              ? "Failure detected"
+              : "All systems normal"}
 
           </span>
 
         </div>
 
 
+        {/* =================================================
+            SENSOR FAILURE ITEMS
+        ================================================= */}
+
         <div className="failure-grid">
 
+
+          {/* TEMPERATURE */}
 
           <FailureItem
             title="Temperature sensor"
             failed={
+              !deviceConnected ||
               temperatureFailure
             }
           />
 
 
+          {/* VOLTAGE */}
+
           <FailureItem
             title="Voltage sensor"
             failed={
+              !deviceConnected ||
               voltageFailure
             }
           />
 
 
+          {/* DOOR */}
+
           <FailureItem
             title="Door sensor"
             failed={
+              !deviceConnected ||
               doorFailure
             }
           />
@@ -1174,7 +1198,6 @@ export default function Monitoring() {
         </div>
 
       </div>
-
 
     </div>
   );
