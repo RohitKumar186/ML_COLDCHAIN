@@ -13,16 +13,15 @@ const ML_URL =
 //   ↓
 // Node Backend
 //   ↓
-// PostgreSQL
+// PostgreSQL  ← every sensor reading is saved
 //   ↓
-// Recent sensor history
+// Complete valid sensor history
 //   ↓
 // Flask ML
 // =========================================================
 
 router.post("/", async (req, res) => {
   try {
-
     const {
       inside_temperature,
       outside_temperature,
@@ -30,7 +29,6 @@ router.post("/", async (req, res) => {
       voltage,
       power_present
     } = req.body || {};
-
 
     // =====================================================
     // VALIDATION
@@ -47,7 +45,6 @@ router.post("/", async (req, res) => {
       });
     }
 
-
     const insideTemp =
       Number(inside_temperature);
 
@@ -60,7 +57,6 @@ router.post("/", async (req, res) => {
     const powerPresent =
       Boolean(power_present);
 
-
     if (
       !Number.isFinite(insideTemp) ||
       !Number.isFinite(outsideTemp) ||
@@ -71,12 +67,15 @@ router.post("/", async (req, res) => {
       });
     }
 
-
     // =====================================================
     // DETERMINE MODE
     //
     // > 12°C  → PRE_COOLING
     // <= 12°C → ML_CONTROL
+    //
+    // IMPORTANT:
+    // This mode is for system control.
+    // It is NOT a data collection cutoff.
     // =====================================================
 
     const mode =
@@ -84,120 +83,236 @@ router.post("/", async (req, res) => {
         ? "PRE_COOLING"
         : "ML_CONTROL";
 
+    // =====================================================
+    // SAVE CURRENT SENSOR READING FIRST
+    //
+    // IMPORTANT:
+    // Sensor data must be stored even if ML is temporarily
+    // unavailable.
+    // =====================================================
+
+    const coolingOnFromTemperature =
+      insideTemp > 8;
+
+    const insertResult =
+      await pool.query(
+        `
+        INSERT INTO sensor_readings
+        (
+          temperature,
+          outside_temperature,
+          voltage,
+          door_open,
+          cooling_on,
+          device_connected,
+          recorded_at
+        )
+        VALUES
+        (
+          $1,
+          $2,
+          $3,
+          false,
+          $4,
+          $5,
+          NOW()
+        )
+        RETURNING id, recorded_at
+        `,
+        [
+          insideTemp,
+          outsideTemp,
+          voltageValue,
+          coolingOnFromTemperature,
+          true
+        ]
+      );
+
+    console.log(
+      "[ESP32] Sensor reading saved:",
+      insertResult.rows[0]
+    );
 
     // =====================================================
-    // GET CURRENT SENSOR HISTORY
+    // GET COMPLETE SENSOR HISTORY
     //
-    // We fetch recent readings AFTER the current ESP32
-    // reading is received.
+    // No LIMIT 100.
     //
-    // Old records with NULL outside temperature are
-    // ignored because ML requires outside temperature.
+    // Every valid reading is available for ML.
     // =====================================================
 
     const historyResult =
-      await pool.query(`
+      await pool.query(
+        `
         SELECT
+          id,
           recorded_at AS timestamp,
           temperature AS inside_temp,
           outside_temperature AS outside_temp,
           cooling_on
         FROM sensor_readings
-        WHERE outside_temperature IS NOT NULL
-        ORDER BY recorded_at DESC, id DESC
-        LIMIT 100
-      `);
-
+        WHERE
+          temperature IS NOT NULL
+          AND outside_temperature IS NOT NULL
+        ORDER BY
+          recorded_at ASC,
+          id ASC
+        `
+      );
 
     // =====================================================
-    // CREATE HISTORY FOR ML
-    //
-    // PostgreSQL returns newest first.
-    // ML requires chronological order.
+    // CREATE ML HISTORY
     // =====================================================
 
     const history =
-      historyResult.rows
-        .reverse()
-        .map((row) => ({
-          timestamp: row.timestamp,
-          inside_temp: Number(row.inside_temp),
-          outside_temp: Number(row.outside_temp),
+      historyResult.rows.map(
+        (row) => ({
+          timestamp:
+            row.timestamp,
+
+          inside_temp:
+            Number(row.inside_temp),
+
+          outside_temp:
+            Number(row.outside_temp),
+
+          /*
+            Mode is derived from temperature so that
+            historical rows remain consistent.
+          */
+
           mode:
             Number(row.inside_temp) > 12
               ? "PRE_COOLING"
-              : "ML_CONTROL"
-        }));
+              : "ML_CONTROL",
 
+          /*
+            Keep actual cooling state available
+            for future training logic.
+          */
 
-    // =====================================================
-    // ADD CURRENT READING TO HISTORY
-    // =====================================================
-
-    history.push({
-      timestamp: new Date().toISOString(),
-
-      inside_temp:
-        insideTemp,
-
-      outside_temp:
-        outsideTemp,
-
-      mode
-    });
-
-
-    // =====================================================
-    // SEND LIVE HISTORY TO ML
-    // =====================================================
-
-    const mlResponse =
-      await fetch(
-        ML_URL,
-        {
-          method: "POST",
-
-          headers: {
-            "Content-Type":
-              "application/json"
-          },
-
-          body: JSON.stringify({
-
-            inside_temperature:
-              insideTemp,
-
-            outside_temperature:
-              outsideTemp,
-
-            history
-
-          })
-        }
+          cooling_level:
+            Number(row.cooling_on)
+              ? 1
+              : 0
+        })
       );
 
-
     // =====================================================
-    // CHECK ML RESPONSE
+    // SEND COMPLETE HISTORY TO ML
     // =====================================================
 
-    if (!mlResponse.ok) {
+    let prediction = null;
 
-      const errorText =
-        await mlResponse.text();
+    try {
+      const mlResponse =
+        await fetch(
+          ML_URL,
+          {
+            method: "POST",
 
-      throw new Error(
-        `ML API returned ${mlResponse.status}: ${errorText}`
+            headers: {
+              "Content-Type":
+                "application/json"
+            },
+
+            body: JSON.stringify({
+              inside_temperature:
+                insideTemp,
+
+              outside_temperature:
+                outsideTemp,
+
+              history
+            })
+          }
+        );
+
+      // ===================================================
+      // CHECK ML RESPONSE
+      // ===================================================
+
+      if (!mlResponse.ok) {
+
+        const errorText =
+          await mlResponse.text();
+
+        throw new Error(
+          `ML API returned ${mlResponse.status}: ${errorText}`
+        );
+      }
+
+      prediction =
+        await mlResponse.json();
+
+    } catch (mlError) {
+
+      // ===================================================
+      // ML FAILURE MUST NOT DELETE SENSOR DATA
+      //
+      // PostgreSQL reading is already saved.
+      // ===================================================
+
+      console.error(
+        "ML API error:",
+        mlError
       );
+
+      return res.json({
+        success: true,
+
+        inside_temperature:
+          insideTemp,
+
+        outside_temperature:
+          outsideTemp,
+
+        voltage:
+          voltageValue,
+
+        power_present:
+          powerPresent,
+
+        device_connected:
+          true,
+
+        mode,
+
+        prediction_status:
+          "ML_UNAVAILABLE",
+
+        cooling_level:
+          0,
+
+        cooling_decision:
+          "OFF",
+
+        peltier:
+          "OFF",
+
+        fan:
+          "OFF",
+
+        trend:
+          "STABLE",
+
+        risk:
+          insideTemp > 12
+            ? "high"
+            : insideTemp >= 8
+            ? "medium"
+            : "low",
+
+        future_temperatures:
+          [],
+
+        history_count:
+          history.length
+      });
     }
 
-
-    const prediction =
-      await mlResponse.json();
-
-
     // =====================================================
-    // COOLING STATUS
+    // COOLING STATUS FROM ML
     // =====================================================
 
     const coolingLevel =
@@ -205,50 +320,11 @@ router.post("/", async (req, res) => {
         prediction.cooling_level ?? 0
       );
 
-
     const coolingOn =
       coolingLevel > 0;
 
-
     // =====================================================
-    // SAVE CURRENT SENSOR READING
-    // =====================================================
-
-    await pool.query(
-      `
-      INSERT INTO sensor_readings
-      (
-        temperature,
-        outside_temperature,
-        voltage,
-        door_open,
-        cooling_on,
-        device_connected,
-        recorded_at
-      )
-      VALUES
-      (
-        $1,
-        $2,
-        $3,
-        false,
-        $4,
-        $5,
-        NOW()
-      )
-      `,
-      [
-        insideTemp,
-        outsideTemp,
-        voltageValue,
-        coolingOn,
-        true
-      ]
-    );
-
-
-    // =====================================================
-    // RETURN LIVE ML RESULT TO ESP32
+    // RETURN LIVE ML RESULT
     // =====================================================
 
     res.json({
@@ -283,15 +359,21 @@ router.post("/", async (req, res) => {
 
       cooling_decision:
         prediction.cooling_decision ||
-        (coolingOn ? "ON" : "OFF"),
+        (coolingOn
+          ? "ON"
+          : "OFF"),
 
       peltier:
         prediction.peltier ||
-        (coolingOn ? "ON" : "OFF"),
+        (coolingOn
+          ? "ON"
+          : "OFF"),
 
       fan:
         prediction.fan ||
-        (coolingOn ? "ON" : "OFF"),
+        (coolingOn
+          ? "ON"
+          : "OFF"),
 
       trend:
         prediction.trend ||
@@ -303,10 +385,12 @@ router.post("/", async (req, res) => {
 
       future_temperatures:
         prediction.future_temperatures ||
-        []
+        [],
+
+      history_count:
+        history.length
 
     });
-
 
   } catch (error) {
 
@@ -314,7 +398,6 @@ router.post("/", async (req, res) => {
       "ESP32 API error:",
       error
     );
-
 
     res.status(500).json({
 
@@ -325,9 +408,7 @@ router.post("/", async (req, res) => {
         error.message
 
     });
-
   }
 });
-
 
 export default router;
