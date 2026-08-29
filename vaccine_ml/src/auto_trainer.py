@@ -26,8 +26,10 @@ from src.models.temperature_model import (
 # CONFIGURATION
 # =========================================================
 
-RETRAIN_EVERY = 100
+# Retrain after every 20 NEW valid readings
+RETRAIN_EVERY = 20
 
+# Minimum readings required for first training
 MIN_TRAINING_ROWS = 30
 
 
@@ -61,6 +63,7 @@ def valid_model_file(path):
 def prepare_training_data(history):
 
     if not history:
+
         return pd.DataFrame()
 
 
@@ -77,13 +80,16 @@ def prepare_training_data(history):
                 utc=True
             )
 
+
             inside_temp = float(
                 item.get("inside_temp")
             )
 
+
             outside_temp = float(
                 item.get("outside_temp")
             )
+
 
             cooling_level = int(
                 item.get(
@@ -94,18 +100,21 @@ def prepare_training_data(history):
 
 
             if pd.isna(timestamp):
+
                 continue
 
 
             if not (
                 -20 <= inside_temp <= 60
             ):
+
                 continue
 
 
             if not (
                 -40 <= outside_temp <= 70
             ):
+
                 continue
 
 
@@ -123,12 +132,13 @@ def prepare_training_data(history):
                 "cooling_level":
                     cooling_level,
 
+                # IMPORTANT:
+                # Do NOT use PRE_COOLING cutoff.
+                #
+                # Every valid reading is ML training data.
+
                 "mode":
-                    (
-                        "PRE_COOLING"
-                        if inside_temp > 12
-                        else "ML_CONTROL"
-                    )
+                    "ML_CONTROL"
 
             })
 
@@ -142,10 +152,13 @@ def prepare_training_data(history):
 
 
     if not rows:
+
         return pd.DataFrame()
 
 
-    df = pd.DataFrame(rows)
+    df = pd.DataFrame(
+        rows
+    )
 
 
     # =====================================================
@@ -165,19 +178,33 @@ def prepare_training_data(history):
     )
 
 
-    return (
+    # =====================================================
+    # SORT + REMOVE DUPLICATES
+    # =====================================================
+
+    df = (
+
         df
+
         .sort_values(
             "timestamp"
         )
+
         .drop_duplicates(
-            subset=["timestamp"],
+            subset=[
+                "timestamp"
+            ],
             keep="last"
         )
+
         .reset_index(
             drop=True
         )
+
     )
+
+
+    return df
 
 
 # =========================================================
@@ -230,15 +257,23 @@ def train_from_history(history):
             return False
 
 
-        valid_count = len(df)
+        valid_count = len(
+            df
+        )
 
 
         print()
-        print("=" * 60)
+        print(
+            "=" * 60
+        )
+
         print(
             "       AUTOMATIC MODEL TRAINING"
         )
-        print("=" * 60)
+
+        print(
+            "=" * 60
+        )
 
 
         print(
@@ -251,7 +286,10 @@ def train_from_history(history):
         # MINIMUM DATA
         # =================================================
 
-        if valid_count < MIN_TRAINING_ROWS:
+        if (
+            valid_count
+            < MIN_TRAINING_ROWS
+        ):
 
             print(
                 f"Need at least "
@@ -290,7 +328,7 @@ def train_from_history(history):
 
 
         # =================================================
-        # SAVE DATASET
+        # SAVE TRAINING DATASET
         # =================================================
 
         processed_directory = (
@@ -321,12 +359,7 @@ def train_from_history(history):
 
 
         # =================================================
-        # COOLING MODEL
-        #
-        # IMPORTANT:
-        #
-        # Cooling model failure must NOT stop
-        # temperature model training.
+        # TRAIN COOLING MODEL
         # =================================================
 
         print()
@@ -371,9 +404,9 @@ def train_from_history(history):
 
 
         # =================================================
-        # TEMPERATURE MODEL
+        # TRAIN TEMPERATURE MODEL
         #
-        # THIS MUST RUN EVEN IF COOLING MODEL FAILS.
+        # This must continue even if cooling model fails.
         # =================================================
 
         print()
@@ -420,7 +453,14 @@ def train_from_history(history):
 
 
         # =================================================
-        # UPDATE TRAINING COUNT
+        # UPDATE TRAINING COUNTER
+        #
+        # IMPORTANT:
+        #
+        # Only update this AFTER training attempt.
+        #
+        # This prevents training from being triggered
+        # repeatedly for the same dataset.
         # =================================================
 
         _last_trained_count = valid_count
@@ -445,11 +485,17 @@ def train_from_history(history):
 
 
         print()
-        print("=" * 60)
+        print(
+            "=" * 60
+        )
+
         print(
             "       AUTOMATIC TRAINING COMPLETE"
         )
-        print("=" * 60)
+
+        print(
+            "=" * 60
+        )
 
 
         print(
@@ -465,12 +511,19 @@ def train_from_history(history):
 
 
         print(
-            f"Future points: "
-            f"20"
+            "Future points: 20"
         )
 
 
-        print("=" * 60)
+        print(
+            "Retrain interval: "
+            f"{RETRAIN_EVERY} new readings"
+        )
+
+
+        print(
+            "=" * 60
+        )
 
 
         return temperature_ready
@@ -513,14 +566,19 @@ def should_retrain(history):
         return False
 
 
-    valid_count = len(df)
+    valid_count = len(
+        df
+    )
 
 
     # =====================================================
     # MINIMUM DATA
     # =====================================================
 
-    if valid_count < MIN_TRAINING_ROWS:
+    if (
+        valid_count
+        < MIN_TRAINING_ROWS
+    ):
 
         return False
 
@@ -528,7 +586,8 @@ def should_retrain(history):
     # =====================================================
     # FIRST TRAINING
     #
-    # 0-byte files count as invalid.
+    # Temperature model missing/empty:
+    # train immediately.
     # =====================================================
 
     if not valid_model_file(
@@ -539,9 +598,28 @@ def should_retrain(history):
 
 
     # =====================================================
-    # COOLING MODEL CAN BE UNAVAILABLE
+    # INITIALIZE COUNTER AFTER SERVER RESTART
     #
-    # Temperature prediction should still work.
+    # If model already exists but counter reset to 0,
+    # don't immediately retrain the entire dataset.
+    #
+    # Start counting NEW readings from the current dataset.
+    # =====================================================
+
+    if (
+        _last_trained_count == 0
+    ):
+
+        _last_trained_count = valid_count
+
+        return False
+
+
+    # =====================================================
+    # COOLING MODEL STATUS
+    #
+    # Cooling model can be unavailable.
+    # Temperature prediction can still work.
     # =====================================================
 
     if not valid_model_file(
@@ -556,12 +634,24 @@ def should_retrain(history):
 
 
     # =====================================================
-    # RETRAIN AFTER NEW DATA
+    # NEW DATA COUNT
+    # =====================================================
+
+    new_readings = (
+
+        valid_count
+        -
+        _last_trained_count
+
+    )
+
+
+    # =====================================================
+    # RETRAIN EVERY 20 NEW READINGS
     # =====================================================
 
     if (
-        valid_count
-        - _last_trained_count
+        new_readings
         >= RETRAIN_EVERY
     ):
 
@@ -584,9 +674,16 @@ def maybe_retrain(history):
         return
 
 
+    print()
     print(
         "[AUTO TRAIN] "
-        "New training data threshold reached."
+        "20 NEW TRAINING READINGS REACHED."
+    )
+
+
+    print(
+        "[AUTO TRAIN] "
+        "Starting automatic retraining..."
     )
 
 
