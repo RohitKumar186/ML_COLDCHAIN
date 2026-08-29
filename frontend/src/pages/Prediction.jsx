@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+
 import {
   ResponsiveContainer,
   ComposedChart,
@@ -11,6 +12,7 @@ import {
   ReferenceLine,
   Tooltip,
 } from "recharts";
+
 import {
   BrainCircuit,
   AlertTriangle,
@@ -19,33 +21,56 @@ import {
   Snowflake,
   Power,
 } from "lucide-react";
+
 import "../css/prediction.css";
+
 import { getPrediction } from "../api";
+
 
 /* =====================================================
    PREDICTION PAGE
 ===================================================== */
 
 export default function Prediction() {
-  const [prediction, setPrediction] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [backendError, setBackendError] = useState("");
+
+  const [prediction, setPrediction] =
+    useState(null);
+
+  const [loading, setLoading] =
+    useState(true);
+
+  const [backendError, setBackendError] =
+    useState("");
+
 
   /* =====================================================
      FETCH PREDICTION DATA
   ===================================================== */
 
   const loadPrediction = async () => {
-    try {
-      const data = await getPrediction();
 
-      console.log("Prediction API:", data);
+    try {
+
+      const data =
+        await getPrediction();
+
+      console.log(
+        "Prediction API:",
+        data
+      );
 
       setPrediction(data);
+
       setBackendError("");
+
       setLoading(false);
+
     } catch (error) {
-      console.error("Prediction API error:", error);
+
+      console.error(
+        "Prediction API error:",
+        error
+      );
 
       setBackendError(
         "Unable to connect to prediction backend."
@@ -55,312 +80,584 @@ export default function Prediction() {
     }
   };
 
+
   /* =====================================================
      INITIAL LOAD + LIVE POLLING
   ===================================================== */
 
   useEffect(() => {
+
     loadPrediction();
 
-    const interval = setInterval(() => {
-      loadPrediction();
-    }, 2000);
+    const interval =
+      setInterval(
+        loadPrediction,
+        2000
+      );
 
-    return () => clearInterval(interval);
+    return () =>
+      clearInterval(interval);
+
   }, []);
+
 
   /* =====================================================
      CURRENT TEMPERATURE
-     
-     Python returns:
-     inside_temperature
-===================================================== */
+  ===================================================== */
 
-  const current = useMemo(() => {
-    if (!prediction) return 0;
+  const current =
+    useMemo(() => {
 
-    if (
-      prediction.inside_temperature !== undefined &&
-      prediction.inside_temperature !== null
-    ) {
-      return Number(prediction.inside_temperature) || 0;
-    }
+      if (!prediction)
+        return 0;
 
-    // Compatibility with older dummy backend
-    if (
-      prediction.current !== undefined &&
-      prediction.current !== null
-    ) {
-      return Number(prediction.current) || 0;
-    }
 
-    if (
-      prediction.temperature !== undefined &&
-      prediction.temperature !== null
-    ) {
-      return Number(prediction.temperature) || 0;
-    }
+      if (
+        prediction.inside_temperature !== undefined &&
+        prediction.inside_temperature !== null
+      ) {
 
-    return 0;
-  }, [prediction]);
+        return Number(
+          prediction.inside_temperature
+        ) || 0;
+      }
+
+
+      if (
+        prediction.current !== undefined &&
+        prediction.current !== null
+      ) {
+
+        return Number(
+          prediction.current
+        ) || 0;
+      }
+
+
+      if (
+        prediction.temperature !== undefined &&
+        prediction.temperature !== null
+      ) {
+
+        return Number(
+          prediction.temperature
+        ) || 0;
+      }
+
+
+      return 0;
+
+    }, [prediction]);
+
 
   /* =====================================================
      COOLING DECISION
-     
-     Python returns:
-     cooling_decision
-===================================================== */
+  ===================================================== */
 
-  const coolingDecision = useMemo(() => {
-    if (!prediction) return "OFF";
+  const coolingDecision =
+    useMemo(() => {
 
-    if (
-      prediction.cooling_decision !== undefined &&
-      prediction.cooling_decision !== null
-    ) {
-      return String(
-        prediction.cooling_decision
-      ).toUpperCase();
-    }
+      if (!prediction)
+        return "OFF";
 
-    // Compatibility with camelCase backend
-    if (
-      prediction.coolingDecision !== undefined
-    ) {
-      return String(
-        prediction.coolingDecision
-      ).toUpperCase();
-    }
 
-    return "OFF";
-  }, [prediction]);
+      if (
+        prediction.cooling_decision !== undefined &&
+        prediction.cooling_decision !== null
+      ) {
+
+        return String(
+          prediction.cooling_decision
+        ).toUpperCase();
+
+      }
+
+
+      if (
+        prediction.coolingDecision !== undefined &&
+        prediction.coolingDecision !== null
+      ) {
+
+        return String(
+          prediction.coolingDecision
+        ).toUpperCase();
+
+      }
+
+
+      return "OFF";
+
+    }, [prediction]);
+
 
   /* =====================================================
      COOLING LEVEL
-===================================================== */
+     
+     REAL ML VALUE
+     
+     0 = OFF
+     1 = LOW
+     2 = HIGH
+  ===================================================== */
 
-  const coolingLevel = useMemo(() => {
-    if (!prediction) return 0;
+  const coolingLevel =
+    useMemo(() => {
 
-    if (
-      prediction.cooling_level !== undefined &&
-      prediction.cooling_level !== null
-    ) {
-      return Number(prediction.cooling_level);
-    }
+      if (!prediction)
+        return 0;
 
-    if (
-      prediction.coolingLevel !== undefined &&
-      prediction.coolingLevel !== null
-    ) {
-      return Number(prediction.coolingLevel);
-    }
 
-    if (coolingDecision === "HIGH") return 2;
-    if (coolingDecision === "LOW") return 1;
+      let value = null;
 
-    return 0;
-  }, [prediction, coolingDecision]);
+
+      if (
+        prediction.cooling_level !== undefined &&
+        prediction.cooling_level !== null
+      ) {
+
+        value =
+          Number(
+            prediction.cooling_level
+          );
+
+      }
+
+
+      else if (
+        prediction.coolingLevel !== undefined &&
+        prediction.coolingLevel !== null
+      ) {
+
+        value =
+          Number(
+            prediction.coolingLevel
+          );
+
+      }
+
+
+      /* -----------------------------------------------
+         Fallback from cooling decision
+      ------------------------------------------------ */
+
+      if (
+        !Number.isFinite(value)
+      ) {
+
+        if (
+          coolingDecision === "HIGH"
+        ) {
+
+          return 2;
+
+        }
+
+        if (
+          coolingDecision === "LOW"
+        ) {
+
+          return 1;
+
+        }
+
+        return 0;
+      }
+
+
+      /* -----------------------------------------------
+         Keep level inside valid range
+      ------------------------------------------------ */
+
+      return Math.max(
+        0,
+        Math.min(
+          2,
+          value
+        )
+      );
+
+    }, [
+      prediction,
+      coolingDecision,
+    ]);
+
+
+  /* =====================================================
+     COOLING LEVEL LABEL
+  ===================================================== */
+
+  const coolingLevelLabel =
+    coolingLevel === 2
+      ? "HIGH"
+      : coolingLevel === 1
+      ? "LOW"
+      : "OFF";
+
 
   /* =====================================================
      PELTIER STATUS
-===================================================== */
+     
+     Handles:
+     "ON"
+     "OFF"
+     true
+     false
+  ===================================================== */
 
-  const peltierOn = useMemo(() => {
-    if (!prediction) return false;
+  const peltierOn =
+    useMemo(() => {
 
-    if (
-      prediction.peltier !== undefined &&
-      prediction.peltier !== null
-    ) {
-      return Boolean(prediction.peltier);
-    }
+      if (!prediction)
+        return false;
 
-    return coolingLevel > 0;
-  }, [prediction, coolingLevel]);
+
+      if (
+        prediction.peltier !== undefined &&
+        prediction.peltier !== null
+      ) {
+
+        const value =
+          prediction.peltier;
+
+
+        if (
+          typeof value === "string"
+        ) {
+
+          return (
+            value.toUpperCase() ===
+            "ON"
+          );
+
+        }
+
+
+        return Boolean(value);
+      }
+
+
+      return coolingLevel > 0;
+
+    }, [
+      prediction,
+      coolingLevel,
+    ]);
+
+
+  /* =====================================================
+     FAN STATUS
+  ===================================================== */
+
+  const fanOn =
+    useMemo(() => {
+
+      if (!prediction)
+        return false;
+
+
+      if (
+        prediction.fan !== undefined &&
+        prediction.fan !== null
+      ) {
+
+        const value =
+          prediction.fan;
+
+
+        if (
+          typeof value === "string"
+        ) {
+
+          return (
+            value.toUpperCase() ===
+            "ON"
+          );
+
+        }
+
+
+        return Boolean(value);
+      }
+
+
+      return coolingLevel > 0;
+
+    }, [
+      prediction,
+      coolingLevel,
+    ]);
+
 
   /* =====================================================
      FUTURE TEMPERATURES
-     
-     Python returns:
-     
-     future_temperatures: [
-       6.1,
-       6.3,
-       6.3,
-       ...
-     ]
-===================================================== */
+  ===================================================== */
 
-  const futureTemperatures = useMemo(() => {
-    if (!prediction) return [];
+  const futureTemperatures =
+    useMemo(() => {
 
-    if (
-      Array.isArray(
-        prediction.future_temperatures
-      )
-    ) {
-      return prediction.future_temperatures
-        .map(Number)
-        .filter(Number.isFinite);
-    }
+      if (!prediction)
+        return [];
 
-    return [];
-  }, [prediction]);
+
+      if (
+        Array.isArray(
+          prediction.future_temperatures
+        )
+      ) {
+
+        return prediction.future_temperatures
+          .map(Number)
+          .filter(
+            Number.isFinite
+          );
+
+      }
+
+
+      return [];
+
+    }, [prediction]);
+
 
   /* =====================================================
      GRAPH DATA
+  ===================================================== */
 
-     Python currently gives us:
-     
-     current temperature
-     +
-     future temperatures
+  const data =
+    useMemo(() => {
 
-     So we create the graph data here.
-===================================================== */
+      if (!prediction)
+        return [];
 
-  const data = useMemo(() => {
-    if (!prediction) return [];
 
-    const graphData = [];
+      const graphData = [];
 
-    /* -----------------------------------------------
-       Current point
-    ------------------------------------------------ */
 
-    graphData.push({
-      x: "Now",
-      temp: Number(current.toFixed(1)),
-      forecast: Number(current.toFixed(1)),
-    });
+      graphData.push({
 
-    /* -----------------------------------------------
-       Future predictions
+        x: "Now",
 
-       Each prediction represents the next
-       prediction step.
-
-       Currently displayed as:
-       +5m
-       +10m
-       +15m
-       ...
-    ------------------------------------------------ */
-
-    futureTemperatures.forEach(
-      (temperature, index) => {
-        graphData.push({
-          x: `+${(index + 1) * 5}m`,
-          temp: null,
-          forecast: Number(
-            temperature.toFixed(1)
+        temp:
+          Number(
+            current.toFixed(1)
           ),
-        });
-      }
-    );
 
-    return graphData;
-  }, [prediction, current, futureTemperatures]);
+        forecast:
+          Number(
+            current.toFixed(1)
+          ),
+
+      });
+
+
+      futureTemperatures.forEach(
+        (
+          temperature,
+          index
+        ) => {
+
+          graphData.push({
+
+            x:
+              `+${(index + 1) * 5}m`,
+
+            temp:
+              null,
+
+            forecast:
+              Number(
+                temperature.toFixed(1)
+              ),
+
+          });
+
+        }
+      );
+
+
+      return graphData;
+
+    }, [
+      prediction,
+      current,
+      futureTemperatures,
+    ]);
+
 
   /* =====================================================
      PROJECTED VALUES
-===================================================== */
+  ===================================================== */
 
-  const projected = useMemo(() => {
-    return data
-      .filter(
-        (item) =>
-          item.forecast !== null &&
-          item.forecast !== undefined &&
-          Number.isFinite(item.forecast)
-      )
-      .map((item) => item.forecast);
-  }, [data]);
+  const projected =
+    useMemo(() => {
+
+      return data
+        .filter(
+          (item) =>
+            item.forecast !== null &&
+            item.forecast !== undefined &&
+            Number.isFinite(
+              item.forecast
+            )
+        )
+        .map(
+          (item) =>
+            item.forecast
+        );
+
+    }, [data]);
+
 
   /* =====================================================
-     MIN / MAX
-===================================================== */
+     MIN
+  ===================================================== */
 
-  const min = useMemo(() => {
-    if (!prediction) return Number(current);
+  const min =
+    useMemo(() => {
 
-    if (
-      prediction.min !== undefined &&
-      prediction.min !== null
-    ) {
-      return Number(prediction.min);
-    }
+      if (!prediction)
+        return Number(current);
 
-    if (projected.length) {
-      return Math.min(
-        ...projected,
-        Number(current)
-      );
-    }
 
-    return Number(current);
-  }, [prediction, projected, current]);
+      if (
+        prediction.min !== undefined &&
+        prediction.min !== null
+      ) {
 
-  const max = useMemo(() => {
-    if (!prediction) return Number(current);
+        return Number(
+          prediction.min
+        );
 
-    if (
-      prediction.max !== undefined &&
-      prediction.max !== null
-    ) {
-      return Number(prediction.max);
-    }
+      }
 
-    if (projected.length) {
-      return Math.max(
-        ...projected,
-        Number(current)
-      );
-    }
 
-    return Number(current);
-  }, [prediction, projected, current]);
+      if (projected.length) {
+
+        return Math.min(
+          ...projected,
+          Number(current)
+        );
+
+      }
+
+
+      return Number(current);
+
+    }, [
+      prediction,
+      projected,
+      current,
+    ]);
+
+
+  /* =====================================================
+     MAX
+  ===================================================== */
+
+  const max =
+    useMemo(() => {
+
+      if (!prediction)
+        return Number(current);
+
+
+      if (
+        prediction.max !== undefined &&
+        prediction.max !== null
+      ) {
+
+        return Number(
+          prediction.max
+        );
+
+      }
+
+
+      if (projected.length) {
+
+        return Math.max(
+          ...projected,
+          Number(current)
+        );
+
+      }
+
+
+      return Number(current);
+
+    }, [
+      prediction,
+      projected,
+      current,
+    ]);
+
 
   /* =====================================================
      RISK
-===================================================== */
+  ===================================================== */
 
-  const risk = useMemo(() => {
-    if (prediction?.risk) {
-      return String(
-        prediction.risk
-      ).toLowerCase();
-    }
+  const risk =
+    useMemo(() => {
 
-    if (max > 8 || min < 2) {
-      return "high";
-    }
+      if (prediction?.risk) {
 
-    if (max > 7.4 || min < 2.6) {
-      return "watch";
-    }
+        return String(
+          prediction.risk
+        ).toLowerCase();
 
-    return "low";
-  }, [prediction, min, max]);
+      }
+
+
+      if (
+        max > 8 ||
+        min < 2
+      ) {
+
+        return "high";
+
+      }
+
+
+      if (
+        max > 7.4 ||
+        min < 2.6
+      ) {
+
+        return "watch";
+
+      }
+
+
+      return "low";
+
+    }, [
+      prediction,
+      min,
+      max,
+    ]);
+
 
   /* =====================================================
      TREND
-===================================================== */
+  ===================================================== */
 
-  const trend = useMemo(() => {
-    if (!prediction?.trend) {
-      return "STABLE";
-    }
+  const trend =
+    useMemo(() => {
 
-    return String(
-      prediction.trend
-    ).toUpperCase();
-  }, [prediction]);
+      if (!prediction?.trend)
+        return "STABLE";
+
+
+      return String(
+        prediction.trend
+      ).toUpperCase();
+
+    }, [prediction]);
+
 
   /* =====================================================
-     RISK LABEL
-===================================================== */
+     LABELS
+  ===================================================== */
 
   const riskLabel =
     risk === "low"
@@ -369,9 +666,6 @@ export default function Prediction() {
       ? "Watch"
       : "Elevated risk";
 
-  /* =====================================================
-     COOLING DECISION LABEL
-===================================================== */
 
   const coolingLabel =
     coolingDecision === "HIGH"
@@ -380,15 +674,21 @@ export default function Prediction() {
       ? "Low cooling"
       : "Cooling off";
 
+
   /* =====================================================
-     LOADING STATE
-===================================================== */
+     LOADING
+  ===================================================== */
 
   if (loading) {
+
     return (
+
       <div>
+
         <div className="page-head">
+
           <div>
+
             <div className="eyebrow">
               03 · FORECAST
             </div>
@@ -402,27 +702,40 @@ export default function Prediction() {
               early warning based on current and
               historical readings.
             </p>
+
           </div>
+
         </div>
 
+
         <div className="card">
+
           <div className="card-sub">
             Loading prediction data...
           </div>
+
         </div>
+
       </div>
+
     );
   }
 
+
   /* =====================================================
      BACKEND ERROR
-===================================================== */
+  ===================================================== */
 
   if (backendError) {
+
     return (
+
       <div>
+
         <div className="page-head">
+
           <div>
+
             <div className="eyebrow">
               03 · FORECAST
             </div>
@@ -436,30 +749,43 @@ export default function Prediction() {
               early warning based on current and
               historical readings.
             </p>
+
           </div>
+
         </div>
 
+
         <div className="alert warn">
+
           <AlertTriangle size={14} />
+
           {backendError}
+
         </div>
+
       </div>
+
     );
   }
 
+
   /* =====================================================
      UI
-===================================================== */
+  ===================================================== */
 
   return (
+
     <div>
+
 
       {/* =================================================
           PAGE HEADER
       ================================================= */}
 
       <div className="page-head">
+
         <div>
+
           <div className="eyebrow">
             03 · FORECAST
           </div>
@@ -473,7 +799,9 @@ export default function Prediction() {
             early warning based on current and
             historical readings.
           </p>
+
         </div>
+
 
         <span
           className={`badge ${
@@ -484,6 +812,7 @@ export default function Prediction() {
               : "ok"
           }`}
         >
+
           {risk === "low" ? (
             <ShieldCheck size={12} />
           ) : (
@@ -491,7 +820,9 @@ export default function Prediction() {
           )}
 
           {riskLabel}
+
         </span>
+
       </div>
 
 
@@ -500,25 +831,31 @@ export default function Prediction() {
       ================================================= */}
 
       {risk !== "low" && (
+
         <div className="alert warn">
+
           <AlertTriangle size={14} />
 
           Early warning: the projected temperature is
           approaching or crossing the 2–8°C safe range.
           Review cooling and door conditions.
+
         </div>
+
       )}
 
 
       {/* =================================================
-          PREDICTION KPIs
+          FIRST KPI ROW
       ================================================= */}
 
       <div className="grid grid-3 prediction-kpis">
 
-        {/* CURRENT TEMPERATURE */}
+
+        {/* CURRENT */}
 
         <div className="stat">
+
           <div className="stat-label">
             Current temperature
           </div>
@@ -530,30 +867,37 @@ export default function Prediction() {
           <div className="stat-meta">
             Live reading
           </div>
+
         </div>
 
 
         {/* PROJECTED RANGE */}
 
         <div className="stat">
+
           <div className="stat-label">
             Projected range
           </div>
 
           <div className="stat-value">
-            {Number(min).toFixed(1)}–
+
+            {Number(min).toFixed(1)}
+            –
             {Number(max).toFixed(1)}°C
+
           </div>
 
           <div className="stat-meta">
             Next forecast window
           </div>
+
         </div>
 
 
         {/* RISK */}
 
         <div className="stat">
+
           <div className="stat-label">
             Risk level
           </div>
@@ -561,81 +905,123 @@ export default function Prediction() {
           <div
             className={`stat-value risk-${risk}`}
           >
+
             {risk === "low"
               ? "Low"
               : risk === "watch"
               ? "Watch"
               : "Elevated"}
+
           </div>
 
           <div className="stat-meta">
             Based on predicted temperature
           </div>
+
         </div>
 
       </div>
 
 
       {/* =================================================
-          COOLING CONTROL
+          SECOND KPI ROW
       ================================================= */}
 
       <div className="grid grid-3 prediction-kpis">
 
-        {/* COOLING DECISION */}
+
+        {/* =================================================
+            ML COOLING DECISION
+        ================================================= */}
 
         <div className="stat">
+
           <div className="stat-label">
+
             <Snowflake
               size={14}
               style={{
-                verticalAlign: "middle",
-                marginRight: "5px",
+                verticalAlign:
+                  "middle",
+                marginRight:
+                  "5px",
               }}
             />
+
             ML cooling decision
+
           </div>
+
 
           <div className="stat-value">
+
             {coolingDecision}
+
           </div>
 
+
           <div className="stat-meta">
+
             {coolingLabel}
+
           </div>
+
         </div>
 
 
-        {/* COOLING LEVEL */}
+        {/* =================================================
+            COOLING LEVEL
+        ================================================= */}
 
         <div className="stat">
+
           <div className="stat-label">
             Cooling level
           </div>
 
+
           <div className="stat-value">
+
             {coolingLevel} / 2
+
           </div>
 
+
           <div className="stat-meta">
+
+            {coolingLevelLabel}
+
+            {" · "}
+
             0 = OFF · 1 = LOW · 2 = HIGH
+
           </div>
+
         </div>
 
 
-        {/* PELTIER STATUS */}
+        {/* =================================================
+            PELTIER
+        ================================================= */}
 
         <div className="stat">
+
           <div className="stat-label">
+
             <Power
               size={14}
               style={{
-                verticalAlign: "middle",
-                marginRight: "5px",
+                verticalAlign:
+                  "middle",
+                marginRight:
+                  "5px",
               }}
             />
+
             Peltier status
+
           </div>
+
 
           <div
             className={`stat-value ${
@@ -644,21 +1030,29 @@ export default function Prediction() {
                 : "risk-low"
             }`}
           >
-            {peltierOn ? "ON" : "OFF"}
+
+            {peltierOn
+              ? "ON"
+              : "OFF"}
+
           </div>
 
+
           <div className="stat-meta">
+
             {peltierOn
               ? "Cooling is active"
               : "Cooling is inactive"}
+
           </div>
+
         </div>
 
       </div>
 
 
       {/* =================================================
-          ML TREND
+          FAN STATUS
       ================================================= */}
 
       <div className="card prediction-trend">
@@ -666,16 +1060,82 @@ export default function Prediction() {
         <div className="card-head">
 
           <div>
+
             <h3 className="card-title">
-              <TrendingUp size={15} />
-              Predicted trend
+
+              <Snowflake size={15} />
+
+              Cooling hardware
+
             </h3>
 
             <div className="card-sub">
-              ML prediction indicates the temperature is{" "}
-              <b>{trend}</b>.
+
+              ML control output sent toward the
+              cooling system.
+
             </div>
+
           </div>
+
+
+          <div>
+
+            <b>
+              Peltier:{" "}
+            </b>
+
+            {peltierOn
+              ? "ON"
+              : "OFF"}
+
+            {" · "}
+
+            <b>
+              Fan:{" "}
+            </b>
+
+            {fanOn
+              ? "ON"
+              : "OFF"}
+
+          </div>
+
+        </div>
+
+      </div>
+
+
+      {/* =================================================
+          PREDICTED TREND
+      ================================================= */}
+
+      <div className="card prediction-trend">
+
+        <div className="card-head">
+
+          <div>
+
+            <h3 className="card-title">
+
+              <TrendingUp size={15} />
+
+              Predicted trend
+
+            </h3>
+
+            <div className="card-sub">
+
+              ML prediction indicates the temperature is{" "}
+
+              <b>
+                {trend}
+              </b>.
+
+            </div>
+
+          </div>
+
 
           <BrainCircuit
             size={17}
@@ -688,7 +1148,7 @@ export default function Prediction() {
 
 
       {/* =================================================
-          TEMPERATURE FORECAST GRAPH
+          FORECAST GRAPH
       ================================================= */}
 
       <div className="card prediction-chart">
@@ -696,16 +1156,24 @@ export default function Prediction() {
         <div className="card-head">
 
           <div>
+
             <h3 className="card-title">
+
               <TrendingUp size={15} />
+
               Temperature forecast
+
             </h3>
 
             <div className="card-sub">
+
               Current temperature followed by ML
               projected temperature
+
             </div>
+
           </div>
+
 
           <BrainCircuit
             size={17}
@@ -718,15 +1186,21 @@ export default function Prediction() {
         <div className="chart-box">
 
           {data.length === 0 ? (
+
             <div className="card-sub">
               No prediction data available.
             </div>
+
           ) : (
+
             <ResponsiveContainer
               width="100%"
               height="100%"
             >
-              <ComposedChart data={data}>
+
+              <ComposedChart
+                data={data}
+              >
 
                 <CartesianGrid
                   stroke="#e7ebf1"
@@ -734,8 +1208,6 @@ export default function Prediction() {
                   vertical={false}
                 />
 
-
-                {/* SAFE RANGE */}
 
                 <ReferenceArea
                   y1={2}
@@ -745,16 +1217,12 @@ export default function Prediction() {
                 />
 
 
-                {/* UPPER LIMIT */}
-
                 <ReferenceLine
                   y={8}
                   stroke="#d94250"
                   strokeDasharray="4 4"
                 />
 
-
-                {/* LOWER LIMIT */}
 
                 <ReferenceLine
                   y={2}
@@ -765,28 +1233,38 @@ export default function Prediction() {
 
                 <XAxis
                   dataKey="x"
-                  tick={{ fontSize: 10 }}
+                  tick={{
+                    fontSize: 10,
+                  }}
                 />
 
 
                 <YAxis
                   domain={[0, 10]}
-                  tick={{ fontSize: 10 }}
+                  tick={{
+                    fontSize: 10,
+                  }}
                   tickCount={6}
                 />
 
 
                 <Tooltip
-                  formatter={(value, name) => [
-                    `${Number(value).toFixed(1)}°C`,
-                    name === "forecast"
-                      ? "Predicted"
-                      : "Temperature",
-                  ]}
+                  formatter={
+                    (value, name) => [
+
+                      `${Number(
+                        value
+                      ).toFixed(1)}°C`,
+
+                      name ===
+                      "forecast"
+                        ? "Predicted"
+                        : "Temperature",
+
+                    ]
+                  }
                 />
 
-
-                {/* CURRENT TEMPERATURE */}
 
                 <Area
                   type="monotone"
@@ -797,8 +1275,6 @@ export default function Prediction() {
                   connectNulls={false}
                 />
 
-
-                {/* ML PREDICTION */}
 
                 <Line
                   type="monotone"
@@ -811,7 +1287,9 @@ export default function Prediction() {
                 />
 
               </ComposedChart>
+
             </ResponsiveContainer>
+
           )}
 
         </div>
@@ -820,14 +1298,28 @@ export default function Prediction() {
         <div className="chart-footer">
 
           <span>
-            Safe range: <b>2°C – 8°C</b>
+
+            Safe range:{" "}
+
+            <b>
+              2°C – 8°C
+            </b>
+
           </span>
 
+
           <span>
+
             Current:{" "}
+
             <b>
-              {Number(current).toFixed(1)}°C
+
+              {Number(
+                current
+              ).toFixed(1)}°C
+
             </b>
+
           </span>
 
         </div>
@@ -841,7 +1333,6 @@ export default function Prediction() {
 
       <div className="grid grid-2 prediction-info">
 
-        {/* WARNING LOGIC */}
 
         <div className="card">
 
@@ -875,8 +1366,6 @@ export default function Prediction() {
 
         </div>
 
-
-        {/* RECOMMENDED CHECKS */}
 
         <div className="card">
 
