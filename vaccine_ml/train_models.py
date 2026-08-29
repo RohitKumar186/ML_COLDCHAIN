@@ -1,7 +1,9 @@
 import os
 import pandas as pd
 
-from src.config import PROCESSED_DATA_PATH
+from src.config import (
+    PROCESSED_DATA_PATH
+)
 
 from src.models.cooling_model import (
     train_cooling_model
@@ -12,7 +14,7 @@ from src.models.temperature_model import (
 )
 
 
-def main():
+def train_all_models():
 
     print("=" * 60)
     print("        VACCINE ML MODEL TRAINING")
@@ -57,16 +59,16 @@ def main():
     )
 
 
-    # =====================================================
-    # CHECK REQUIRED DATA
-    # =====================================================
-
-    if len(df) == 0:
+    if df.empty:
 
         raise ValueError(
             "Training dataset is empty."
         )
 
+
+    # =====================================================
+    # COOLING MODEL
+    # =====================================================
 
     print()
     print("=" * 60)
@@ -74,23 +76,18 @@ def main():
     print("=" * 60)
 
 
-    # =====================================================
-    # TRAIN COOLING MODEL
-    # =====================================================
-
     cooling_model = (
         train_cooling_model()
     )
 
 
-    print()
     print(
         "Cooling model training completed."
     )
 
 
     # =====================================================
-    # TRAIN TEMPERATURE MODEL
+    # TEMPERATURE MODEL
     # =====================================================
 
     print()
@@ -106,7 +103,6 @@ def main():
     )
 
 
-    print()
     print(
         "Temperature model training completed."
     )
@@ -121,7 +117,6 @@ def main():
     print("        TRAINING COMPLETED")
     print("=" * 60)
 
-    print()
     print(
         "Cooling model saved to:"
     )
@@ -129,8 +124,6 @@ def main():
     print(
         "models/cooling_model.pkl"
     )
-
-    print()
 
     print(
         "Temperature model saved to:"
@@ -140,10 +133,20 @@ def main():
         "models/temperature_model.pkl"
     )
 
-    print()
     print(
         "Models are ready for prediction."
     )
+
+
+    return {
+        "cooling_model": cooling_model,
+        "temperature_model": temperature_model
+    }
+
+
+def main():
+
+    train_all_models()
 
 
 if __name__ == "__main__":
