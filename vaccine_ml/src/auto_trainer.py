@@ -44,11 +44,6 @@ _training = False
 
 # =========================================================
 # CHECK MODEL FILE
-#
-# exists() alone is NOT enough.
-#
-# A 0-byte .pkl file technically exists, but it is not
-# a valid trained model.
 # =========================================================
 
 def valid_model_file(path):
@@ -66,7 +61,6 @@ def valid_model_file(path):
 def prepare_training_data(history):
 
     if not history:
-
         return pd.DataFrame()
 
 
@@ -83,16 +77,13 @@ def prepare_training_data(history):
                 utc=True
             )
 
-
             inside_temp = float(
                 item.get("inside_temp")
             )
 
-
             outside_temp = float(
                 item.get("outside_temp")
             )
-
 
             cooling_level = int(
                 item.get(
@@ -103,25 +94,18 @@ def prepare_training_data(history):
 
 
             if pd.isna(timestamp):
-
                 continue
 
 
             if not (
-                -20
-                <= inside_temp
-                <= 60
+                -20 <= inside_temp <= 60
             ):
-
                 continue
 
 
             if not (
-                -40
-                <= outside_temp
-                <= 70
+                -40 <= outside_temp <= 70
             ):
-
                 continue
 
 
@@ -158,13 +142,10 @@ def prepare_training_data(history):
 
 
     if not rows:
-
         return pd.DataFrame()
 
 
-    df = pd.DataFrame(
-        rows
-    )
+    df = pd.DataFrame(rows)
 
 
     # =====================================================
@@ -186,16 +167,13 @@ def prepare_training_data(history):
 
     return (
         df
-
         .sort_values(
             "timestamp"
         )
-
         .drop_duplicates(
             subset=["timestamp"],
             keep="last"
         )
-
         .reset_index(
             drop=True
         )
@@ -213,7 +191,7 @@ def train_from_history(history):
 
 
     # =====================================================
-    # PREVENT TWO TRAINING JOBS AT ONCE
+    # PREVENT MULTIPLE TRAINING JOBS
     # =====================================================
 
     with _lock:
@@ -234,7 +212,7 @@ def train_from_history(history):
     try:
 
         # =================================================
-        # PREPARE RAW HISTORY
+        # PREPARE HISTORY
         # =================================================
 
         df = prepare_training_data(
@@ -270,7 +248,7 @@ def train_from_history(history):
 
 
         # =================================================
-        # MINIMUM DATA CHECK
+        # MINIMUM DATA
         # =================================================
 
         if valid_count < MIN_TRAINING_ROWS:
@@ -312,7 +290,7 @@ def train_from_history(history):
 
 
         # =================================================
-        # SAVE PROCESSED DATASET
+        # SAVE DATASET
         # =================================================
 
         processed_directory = (
@@ -343,7 +321,12 @@ def train_from_history(history):
 
 
         # =================================================
-        # TRAIN COOLING MODEL
+        # COOLING MODEL
+        #
+        # IMPORTANT:
+        #
+        # Cooling model failure must NOT stop
+        # temperature model training.
         # =================================================
 
         print()
@@ -353,28 +336,44 @@ def train_from_history(history):
         )
 
 
-        cooling_model = (
+        try:
+
             train_cooling_model()
-        )
 
 
-        if not valid_model_file(
-            COOLING_MODEL_PATH
-        ):
+            if valid_model_file(
+                COOLING_MODEL_PATH
+            ):
 
-            raise RuntimeError(
-                "Cooling model was not saved correctly."
+                print(
+                    "[AUTO TRAIN] "
+                    "Cooling model saved successfully."
+                )
+
+            else:
+
+                print(
+                    "[AUTO TRAIN] "
+                    "Cooling model was not saved."
+                )
+
+
+        except Exception as e:
+
+            print(
+                "[AUTO TRAIN] "
+                "Cooling model skipped:"
+            )
+
+            print(
+                str(e)
             )
 
 
-        print(
-            "[AUTO TRAIN] "
-            "Cooling model saved successfully."
-        )
-
-
         # =================================================
-        # TRAIN TEMPERATURE MODEL
+        # TEMPERATURE MODEL
+        #
+        # THIS MUST RUN EVEN IF COOLING MODEL FAILS.
         # =================================================
 
         print()
@@ -384,55 +383,84 @@ def train_from_history(history):
         )
 
 
-        temperature_model = (
+        try:
+
             train_temperature_model(
                 processed
             )
-        )
 
 
-        if not valid_model_file(
-            TEMPERATURE_MODEL_PATH
-        ):
+            if valid_model_file(
+                TEMPERATURE_MODEL_PATH
+            ):
 
-            raise RuntimeError(
-                "Temperature model was not saved correctly."
+                print(
+                    "[AUTO TRAIN] "
+                    "Temperature model saved successfully."
+                )
+
+            else:
+
+                print(
+                    "[AUTO TRAIN] "
+                    "Temperature model was not saved."
+                )
+
+
+        except Exception as e:
+
+            print(
+                "[AUTO TRAIN] "
+                "Temperature model failed:"
+            )
+
+            print(
+                str(e)
             )
 
 
-        print(
-            "[AUTO TRAIN] "
-            "Temperature model saved successfully."
-        )
-
-
         # =================================================
-        # UPDATE TRAINING STATE
+        # UPDATE TRAINING COUNT
         # =================================================
 
         _last_trained_count = valid_count
 
 
         # =================================================
-        # FINAL
+        # FINAL STATUS
         # =================================================
 
+        cooling_ready = (
+            valid_model_file(
+                COOLING_MODEL_PATH
+            )
+        )
+
+
+        temperature_ready = (
+            valid_model_file(
+                TEMPERATURE_MODEL_PATH
+            )
+        )
+
+
         print()
+        print("=" * 60)
         print(
-            "[AUTO TRAIN] "
-            "Models successfully updated."
+            "       AUTOMATIC TRAINING COMPLETE"
+        )
+        print("=" * 60)
+
+
+        print(
+            f"Cooling model ready: "
+            f"{cooling_ready}"
         )
 
 
         print(
-            f"Cooling model: "
-            f"{COOLING_MODEL_PATH}"
-        )
-
-
-        print(
-            f"Temperature model: "
-            f"{TEMPERATURE_MODEL_PATH}"
+            f"Temperature model ready: "
+            f"{temperature_ready}"
         )
 
 
@@ -445,7 +473,7 @@ def train_from_history(history):
         print("=" * 60)
 
 
-        return True
+        return temperature_ready
 
 
     except Exception as e:
@@ -489,7 +517,7 @@ def should_retrain(history):
 
 
     # =====================================================
-    # NOT ENOUGH DATA
+    # MINIMUM DATA
     # =====================================================
 
     if valid_count < MIN_TRAINING_ROWS:
@@ -500,22 +528,31 @@ def should_retrain(history):
     # =====================================================
     # FIRST TRAINING
     #
-    # IMPORTANT:
-    # Check FILE SIZE, not only existence.
+    # 0-byte files count as invalid.
     # =====================================================
-
-    if not valid_model_file(
-        COOLING_MODEL_PATH
-    ):
-
-        return True
-
 
     if not valid_model_file(
         TEMPERATURE_MODEL_PATH
     ):
 
         return True
+
+
+    # =====================================================
+    # COOLING MODEL CAN BE UNAVAILABLE
+    #
+    # Temperature prediction should still work.
+    # =====================================================
+
+    if not valid_model_file(
+        COOLING_MODEL_PATH
+    ):
+
+        print(
+            "[AUTO TRAIN] "
+            "Cooling model unavailable; "
+            "temperature model remains eligible."
+        )
 
 
     # =====================================================
