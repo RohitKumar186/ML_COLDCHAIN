@@ -1,5 +1,5 @@
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pandas as pd
 
@@ -69,17 +69,29 @@ def predict(
 
         try:
 
+            # -------------------------------------------------
+            # Normalize every incoming timestamp to UTC,
+            # then remove timezone information.
+            #
+            # This prevents:
+            # "Cannot compare tz-naive and tz-aware timestamps"
+            # -------------------------------------------------
+
             timestamp = pd.to_datetime(
-                item.get("timestamp")
-            )
+                item.get("timestamp"),
+                utc=True
+            ).tz_localize(None)
+
 
             inside_value = float(
                 item.get("inside_temp")
             )
 
+
             outside_value = float(
                 item.get("outside_temp")
             )
+
 
             mode_value = item.get("mode")
 
@@ -109,6 +121,7 @@ def predict(
 
             })
 
+
         except (
             TypeError,
             ValueError
@@ -124,7 +137,15 @@ def predict(
 
     current = pd.DataFrame([
         {
-            "timestamp": datetime.now(),
+
+            # Keep current timestamp in the SAME format
+            # as normalized history timestamps.
+            "timestamp":
+                datetime.now(
+                    timezone.utc
+                ).replace(
+                    tzinfo=None
+                ),
 
             "inside_temp":
                 float(inside_temp),
@@ -136,6 +157,7 @@ def predict(
                 determine_mode(
                     inside_temp
                 )
+
         }
     ])
 
@@ -255,6 +277,7 @@ def predict(
             inside_temp
         )
 
+
         action = cooling_action(
             level
         )
@@ -262,6 +285,7 @@ def predict(
 
         # -------------------------------------------------
         # RISK
+        #
         # 0 → LOW
         # 1 → MEDIUM
         # 2 → HIGH
@@ -318,18 +342,23 @@ def predict(
     # =====================================================
 
     if (
+
         not os.path.exists(
             COOLING_MODEL_PATH
         )
+
         or
+
         not os.path.exists(
             TEMPERATURE_MODEL_PATH
         )
+
     ):
 
         level = determine_cooling_level(
             inside_temp
         )
+
 
         action = cooling_action(
             level
@@ -410,6 +439,7 @@ def predict(
             inside_temp
         )
 
+
         action = cooling_action(
             level
         )
@@ -483,6 +513,7 @@ def predict(
         load_cooling_model()
     )
 
+
     temperature_model = (
         load_temperature_model()
     )
@@ -516,11 +547,15 @@ def predict(
 
 
     future_temperatures = [
+
         round(
             float(value),
             2
         )
-        for value in future_temperatures
+
+        for value in
+        future_temperatures
+
     ]
 
 
@@ -529,8 +564,11 @@ def predict(
     # =====================================================
 
     trend = determine_trend(
+
         inside_temp,
+
         future_temperatures
+
     )
 
 
