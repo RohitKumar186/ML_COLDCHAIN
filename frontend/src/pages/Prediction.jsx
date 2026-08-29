@@ -7,7 +7,6 @@ import React, {
 import {
   ResponsiveContainer,
   ComposedChart,
-  Area,
   Line,
   XAxis,
   YAxis,
@@ -37,14 +36,11 @@ import { getPrediction } from "../api";
 
 export default function Prediction() {
 
-  const [prediction, setPrediction] =
-    useState(null);
+  const [prediction, setPrediction] = useState(null);
 
-  const [loading, setLoading] =
-    useState(true);
+  const [loading, setLoading] = useState(true);
 
-  const [backendError, setBackendError] =
-    useState("");
+  const [backendError, setBackendError] = useState("");
 
 
   /* =======================================================
@@ -55,8 +51,7 @@ export default function Prediction() {
 
     try {
 
-      const data =
-        await getPrediction();
+      const data = await getPrediction();
 
       console.log(
         "Prediction API:",
@@ -93,14 +88,12 @@ export default function Prediction() {
 
     loadPrediction();
 
-    const interval =
-      setInterval(
-        loadPrediction,
-        2000
-      );
+    const interval = setInterval(
+      loadPrediction,
+      2000
+    );
 
-    return () =>
-      clearInterval(interval);
+    return () => clearInterval(interval);
 
   }, []);
 
@@ -115,47 +108,168 @@ export default function Prediction() {
       return 0;
     }
 
+    const value =
+      prediction.inside_temperature ??
+      prediction.inside_temp ??
+      prediction.current ??
+      prediction.temperature;
 
-    if (
-      prediction.inside_temperature !==
-        undefined &&
-      prediction.inside_temperature !==
-        null
-    ) {
+    return Number(value) || 0;
 
-      return Number(
-        prediction.inside_temperature
-      ) || 0;
+  }, [prediction]);
+
+
+  /* =======================================================
+     FUTURE ML PREDICTIONS
+  ======================================================= */
+
+  const futureTemperatures = useMemo(() => {
+
+    if (!prediction) {
+      return [];
     }
 
+    const values =
+      prediction.future_temperatures ??
+      prediction.futureTemperatures ??
+      prediction.predictions ??
+      [];
 
-    if (
-      prediction.current !==
-        undefined &&
-      prediction.current !==
-        null
-    ) {
-
-      return Number(
-        prediction.current
-      ) || 0;
+    if (!Array.isArray(values)) {
+      return [];
     }
 
+    return values
+      .map(Number)
+      .filter(Number.isFinite);
 
-    if (
-      prediction.temperature !==
-        undefined &&
-      prediction.temperature !==
-        null
-    ) {
+  }, [prediction]);
 
-      return Number(
-        prediction.temperature
-      ) || 0;
+
+  /* =======================================================
+     PREDICTION AVAILABLE
+  ======================================================= */
+
+  const hasPrediction =
+    futureTemperatures.length > 0;
+
+
+  /* =======================================================
+     PROJECTED VALUES
+  ======================================================= */
+
+  const projectedMin = useMemo(() => {
+
+    if (!hasPrediction) {
+      return null;
     }
 
+    return Math.min(
+      ...futureTemperatures
+    );
 
-    return 0;
+  }, [futureTemperatures, hasPrediction]);
+
+
+  const projectedMax = useMemo(() => {
+
+    if (!hasPrediction) {
+      return null;
+    }
+
+    return Math.max(
+      ...futureTemperatures
+    );
+
+  }, [futureTemperatures, hasPrediction]);
+
+
+  /* =======================================================
+     LAST PREDICTED TEMPERATURE
+  ======================================================= */
+
+  const finalPrediction = useMemo(() => {
+
+    if (!hasPrediction) {
+      return null;
+    }
+
+    return futureTemperatures[
+      futureTemperatures.length - 1
+    ];
+
+  }, [
+    futureTemperatures,
+    hasPrediction,
+  ]);
+
+
+  /* =======================================================
+     TREND
+  ======================================================= */
+
+  const trend = useMemo(() => {
+
+    if (
+      prediction?.trend
+    ) {
+
+      return String(
+        prediction.trend
+      ).toUpperCase();
+
+    }
+
+    if (
+      futureTemperatures.length < 2
+    ) {
+
+      return "STABLE";
+    }
+
+    const first =
+      futureTemperatures[0];
+
+    const last =
+      futureTemperatures[
+        futureTemperatures.length - 1
+      ];
+
+    const difference =
+      last - first;
+
+
+    if (difference > 0.2) {
+      return "UP";
+    }
+
+    if (difference < -0.2) {
+      return "DOWN";
+    }
+
+    return "STABLE";
+
+  }, [
+    prediction,
+    futureTemperatures,
+  ]);
+
+
+  /* =======================================================
+     COOLING LEVEL
+  ======================================================= */
+
+  const coolingLevel = useMemo(() => {
+
+    if (!prediction) {
+      return 0;
+    }
+
+    return Number(
+      prediction.cooling_level ??
+      prediction.coolingLevel ??
+      0
+    );
 
   }, [prediction]);
 
@@ -164,529 +278,107 @@ export default function Prediction() {
      COOLING DECISION
   ======================================================= */
 
-  const coolingDecision =
-    useMemo(() => {
+  const coolingDecision = useMemo(() => {
 
-      if (!prediction) {
-        return "OFF";
-      }
+    if (
+      prediction?.cooling_decision
+    ) {
 
+      return String(
+        prediction.cooling_decision
+      ).toUpperCase();
 
-      if (
-        prediction.cooling_decision !==
-          undefined &&
-        prediction.cooling_decision !==
-          null
-      ) {
-
-        return String(
-          prediction.cooling_decision
-        ).toUpperCase();
-
-      }
-
-
-      if (
-        prediction.coolingDecision !==
-          undefined &&
-        prediction.coolingDecision !==
-          null
-      ) {
-
-        return String(
-          prediction.coolingDecision
-        ).toUpperCase();
-
-      }
-
-
-      /*
-        Backend may return peltier/fan
-        action without cooling_decision.
-      */
-
-      if (
-        prediction.cooling_level !==
-          undefined
-      ) {
-
-        const level =
-          Number(
-            prediction.cooling_level
-          );
-
-        if (level >= 2) {
-          return "HIGH";
-        }
-
-        if (level === 1) {
-          return "LOW";
-        }
-      }
-
-
-      return "OFF";
-
-    }, [prediction]);
-
-
-  /* =======================================================
-     COOLING LEVEL
-  ======================================================= */
-
-  const coolingLevel =
-    useMemo(() => {
-
-      if (!prediction) {
-        return 0;
-      }
-
-
-      if (
-        prediction.cooling_level !==
-          undefined &&
-        prediction.cooling_level !==
-          null
-      ) {
-
-        return Number(
-          prediction.cooling_level
-        );
-      }
-
-
-      if (
-        prediction.coolingLevel !==
-          undefined &&
-        prediction.coolingLevel !==
-          null
-      ) {
-
-        return Number(
-          prediction.coolingLevel
-        );
-      }
-
-
-      if (
-        coolingDecision ===
-        "HIGH"
-      ) {
-
-        return 2;
-      }
-
-
-      if (
-        coolingDecision ===
-        "LOW"
-      ) {
-
-        return 1;
-      }
-
-
-      return 0;
-
-    }, [
-      prediction,
-      coolingDecision,
-    ]);
-
-
-  /* =======================================================
-     PELTIER STATUS
-  ======================================================= */
-
-  const peltierOn =
-    useMemo(() => {
-
-      if (!prediction) {
-        return false;
-      }
-
-
-      if (
-        prediction.peltier !==
-          undefined &&
-        prediction.peltier !==
-          null
-      ) {
-
-        const value =
-          prediction.peltier;
-
-        if (
-          typeof value ===
-          "boolean"
-        ) {
-
-          return value;
-        }
-
-
-        return (
-          String(value)
-            .toUpperCase() !==
-          "OFF"
-        );
-      }
-
-
-      return (
-        coolingLevel > 0
-      );
-
-    }, [
-      prediction,
-      coolingLevel,
-    ]);
-
-
-  /* =======================================================
-     FUTURE ML PREDICTIONS
-     
-     Backend:
-     
-     future_temperatures: [
-       future_1,
-       future_2,
-       ...
-       future_20
-     ]
-  ======================================================= */
-
-  const futureTemperatures =
-    useMemo(() => {
-
-      if (!prediction) {
-        return [];
-      }
-
-
-      if (
-        !Array.isArray(
-          prediction.future_temperatures
-        )
-      ) {
-
-        return [];
-      }
-
-
-      return prediction
-        .future_temperatures
-        .map(Number)
-        .filter(
-          Number.isFinite
-        );
-
-    }, [prediction]);
-
-
-  /* =======================================================
-     PREDICTION AVAILABLE
-  ======================================================= */
-
-  const hasPrediction =
-    futureTemperatures.length >
-    0;
-
-
-  /* =======================================================
-     GRAPH DATA
-     
-     IMPORTANT:
-     
-     Current:
-       temp = current
-       forecast = null
-     
-     Future:
-       temp = null
-       forecast = predicted
-     
-     Therefore current is NOT counted as a
-     predicted value.
-  ======================================================= */
-
-  const data = useMemo(() => {
-
-    if (!prediction) {
-      return [];
     }
 
+    if (coolingLevel >= 2) {
+      return "HIGH";
+    }
 
-    const graphData = [];
+    if (coolingLevel === 1) {
+      return "LOW";
+    }
 
-
-    /* =====================================================
-       CURRENT SENSOR READING
-    ===================================================== */
-
-    graphData.push({
-
-      x: "Now",
-
-      temp:
-        Number(
-          current.toFixed(1)
-        ),
-
-      forecast:
-        null,
-
-      type:
-        "Current",
-
-    });
-
-
-    /* =====================================================
-       FUTURE ML PREDICTIONS
-       
-       FUTURE_POINTS = 20
-       
-       Each point represents one future
-       prediction step.
-       
-       Current model has 20 future points.
-    ===================================================== */
-
-    futureTemperatures.forEach(
-      (
-        temperature,
-        index
-      ) => {
-
-        graphData.push({
-
-          x:
-            `+${(index + 1) * 5}m`,
-
-          temp:
-            null,
-
-          forecast:
-            Number(
-              temperature.toFixed(1)
-            ),
-
-          type:
-            "Predicted",
-
-          step:
-            index + 1,
-
-        });
-
-      }
-    );
-
-
-    return graphData;
+    return "OFF";
 
   }, [
     prediction,
-    current,
-    futureTemperatures,
+    coolingLevel,
   ]);
 
 
   /* =======================================================
-     PROJECTED VALUES
-     
-     ONLY FUTURE ML VALUES.
-     
-     Current sensor value is NOT included.
+     PELTIER
   ======================================================= */
 
-  const projected =
-    useMemo(() => {
+  const peltierOn = useMemo(() => {
 
-      return futureTemperatures
-        .filter(
-          Number.isFinite
-        );
+    if (
+      prediction?.peltier !==
+      undefined
+    ) {
 
-    }, [
-      futureTemperatures,
-    ]);
-
-
-  /* =======================================================
-     PROJECTED MINIMUM
-  ======================================================= */
-
-  const min =
-    useMemo(() => {
+      const value =
+        prediction.peltier;
 
       if (
-        projected.length === 0
+        typeof value === "boolean"
       ) {
 
-        return null;
+        return value;
       }
 
-
-      return Math.min(
-        ...projected
+      return (
+        String(value)
+          .toUpperCase() !==
+        "OFF"
       );
+    }
 
-    }, [
-      projected,
-    ]);
+    return coolingLevel > 0;
 
-
-  /* =======================================================
-     PROJECTED MAXIMUM
-  ======================================================= */
-
-  const max =
-    useMemo(() => {
-
-      if (
-        projected.length === 0
-      ) {
-
-        return null;
-      }
-
-
-      return Math.max(
-        ...projected
-      );
-
-    }, [
-      projected,
-    ]);
-
-
-  /* =======================================================
-     TREND
-     
-     Prefer ML backend trend.
-     
-     Fallback:
-       Compare first and last prediction.
-  ======================================================= */
-
-  const trend =
-    useMemo(() => {
-
-      if (
-        prediction?.trend
-      ) {
-
-        return String(
-          prediction.trend
-        ).toUpperCase();
-
-      }
-
-
-      if (
-        futureTemperatures.length <
-        2
-      ) {
-
-        return "STABLE";
-      }
-
-
-      const first =
-        futureTemperatures[0];
-
-      const last =
-        futureTemperatures[
-          futureTemperatures.length - 1
-        ];
-
-
-      const difference =
-        last - first;
-
-
-      if (
-        difference >
-        0.2
-      ) {
-
-        return "UP";
-      }
-
-
-      if (
-        difference <
-        -0.2
-      ) {
-
-        return "DOWN";
-      }
-
-
-      return "STABLE";
-
-    }, [
-      prediction,
-      futureTemperatures,
-    ]);
+  }, [
+    prediction,
+    coolingLevel,
+  ]);
 
 
   /* =======================================================
      RISK
   ======================================================= */
 
-  const risk =
-    useMemo(() => {
+  const risk = useMemo(() => {
 
-      if (
-        prediction?.risk
-      ) {
+    if (prediction?.risk) {
 
-        return String(
-          prediction.risk
-        ).toLowerCase();
+      return String(
+        prediction.risk
+      ).toLowerCase();
 
-      }
+    }
 
+    if (
+      projectedMax !== null &&
+      projectedMax > 8
+    ) {
 
-      if (
-        max !== null &&
-        (
-          max > 8 ||
-          min < 2
-        )
-      ) {
+      return "high";
+    }
 
-        return "high";
-      }
+    if (
+      projectedMax !== null &&
+      projectedMax > 7.4
+    ) {
 
+      return "watch";
+    }
 
-      if (
-        max !== null &&
-        (
-          max > 7.4 ||
-          min < 2.6
-        )
-      ) {
+    return "low";
 
-        return "watch";
-      }
+  }, [
+    prediction,
+    projectedMax,
+  ]);
 
-
-      return "low";
-
-    }, [
-      prediction,
-      min,
-      max,
-    ]);
-
-
-  /* =======================================================
-     RISK LABEL
-  ======================================================= */
 
   const riskLabel =
     risk === "low"
@@ -694,24 +386,6 @@ export default function Prediction() {
       : risk === "watch"
       ? "Watch"
       : "Elevated risk";
-
-
-  /* =======================================================
-     COOLING LABEL
-  ======================================================= */
-
-  const coolingLabel =
-    coolingDecision ===
-    "HIGH"
-
-      ? "High cooling"
-
-      : coolingDecision ===
-        "LOW"
-
-      ? "Low cooling"
-
-      : "Cooling off";
 
 
   /* =======================================================
@@ -726,6 +400,100 @@ export default function Prediction() {
       ? "Temperature is expected to fall."
 
       : "Temperature is expected to remain stable.";
+
+
+  /* =======================================================
+     GRAPH DATA
+     
+     IMPORTANT:
+     
+     The current point is connected directly to
+     the first ML predicted point.
+     
+     This makes the graph visibly show:
+     
+     CURRENT → FUTURE
+  ======================================================= */
+
+  const graphData = useMemo(() => {
+
+    if (!prediction) {
+      return [];
+    }
+
+    const result = [];
+
+
+    /* =====================================================
+       CURRENT
+    ===================================================== */
+
+    result.push({
+
+      x: "Now",
+
+      temperature:
+        Number(
+          current.toFixed(2)
+        ),
+
+      predicted:
+        hasPrediction
+          ? Number(
+              current.toFixed(2)
+            )
+          : null,
+
+      type: "Current",
+
+      step: 0,
+
+    });
+
+
+    /* =====================================================
+       FUTURE
+    ===================================================== */
+
+    futureTemperatures.forEach(
+      (
+        value,
+        index
+      ) => {
+
+        result.push({
+
+          x:
+            `+${(index + 1) * 5}m`,
+
+          temperature:
+            null,
+
+          predicted:
+            Number(
+              value.toFixed(2)
+            ),
+
+          type:
+            "Predicted",
+
+          step:
+            index + 1,
+
+        });
+
+      }
+    );
+
+
+    return result;
+
+  }, [
+    prediction,
+    current,
+    futureTemperatures,
+    hasPrediction,
+  ]);
 
 
   /* =======================================================
@@ -772,7 +540,6 @@ export default function Prediction() {
       </div>
 
     );
-
   }
 
 
@@ -811,9 +578,7 @@ export default function Prediction() {
 
         <div className="alert warn">
 
-          <AlertTriangle
-            size={14}
-          />
+          <AlertTriangle size={14} />
 
           {backendError}
 
@@ -822,7 +587,6 @@ export default function Prediction() {
       </div>
 
     );
-
   }
 
 
@@ -836,7 +600,7 @@ export default function Prediction() {
 
 
       {/* ===================================================
-          PAGE HEADER
+          HEADER
       =================================================== */}
 
       <div className="page-head">
@@ -872,15 +636,11 @@ export default function Prediction() {
 
           {risk === "low" ? (
 
-            <ShieldCheck
-              size={12}
-            />
+            <ShieldCheck size={12} />
 
           ) : (
 
-            <AlertTriangle
-              size={12}
-            />
+            <AlertTriangle size={12} />
 
           )}
 
@@ -892,21 +652,17 @@ export default function Prediction() {
 
 
       {/* ===================================================
-          EARLY WARNING
+          WARNING
       =================================================== */}
 
       {risk !== "low" && (
 
         <div className="alert warn">
 
-          <AlertTriangle
-            size={14}
-          />
+          <AlertTriangle size={14} />
 
-          Early warning: the projected
-          temperature is approaching or crossing
-          the 2–8°C safe range. Review cooling
-          and door conditions.
+          Early warning: projected temperature
+          requires attention.
 
         </div>
 
@@ -914,7 +670,7 @@ export default function Prediction() {
 
 
       {/* ===================================================
-          PREDICTION KPIs
+          MAIN KPIs
       =================================================== */}
 
       <div className="grid grid-3 prediction-kpis">
@@ -930,9 +686,7 @@ export default function Prediction() {
 
           <div className="stat-value">
 
-            {Number(
-              current
-            ).toFixed(1)}
+            {current.toFixed(1)}
             °C
 
           </div>
@@ -949,13 +703,13 @@ export default function Prediction() {
         <div className="stat">
 
           <div className="stat-label">
-            Projected range
+            Projected temperature
           </div>
 
           <div className="stat-value">
 
             {hasPrediction
-              ? `${Number(min).toFixed(1)}–${Number(max).toFixed(1)}°C`
+              ? `${finalPrediction.toFixed(1)}°C`
               : "—"}
 
           </div>
@@ -963,7 +717,7 @@ export default function Prediction() {
           <div className="stat-meta">
 
             {hasPrediction
-              ? `${futureTemperatures.length} ML future predictions`
+              ? `After ${futureTemperatures.length * 5} minutes`
               : "Waiting for ML prediction"}
 
           </div>
@@ -971,28 +725,30 @@ export default function Prediction() {
         </div>
 
 
-        {/* RISK */}
+        {/* RANGE */}
 
         <div className="stat">
 
           <div className="stat-label">
-            Risk level
+            Projected range
           </div>
 
-          <div
-            className={`stat-value risk-${risk}`}
-          >
+          <div className="stat-value">
 
-            {risk === "low"
-              ? "Low"
-              : risk === "watch"
-              ? "Watch"
-              : "Elevated"}
+            {hasPrediction
+
+              ? `${projectedMin.toFixed(1)}–${projectedMax.toFixed(1)}°C`
+
+              : "—"}
 
           </div>
 
           <div className="stat-meta">
-            Based on projected temperature
+
+            {hasPrediction
+              ? `${futureTemperatures.length} ML predictions`
+              : "No forecast available"}
+
           </div>
 
         </div>
@@ -1001,13 +757,11 @@ export default function Prediction() {
 
 
       {/* ===================================================
-          COOLING CONTROL
+          CONTROL
       =================================================== */}
 
       <div className="grid grid-3 prediction-kpis">
 
-
-        {/* COOLING DECISION */}
 
         <div className="stat">
 
@@ -1016,10 +770,8 @@ export default function Prediction() {
             <Snowflake
               size={14}
               style={{
-                verticalAlign:
-                  "middle",
-                marginRight:
-                  "5px",
+                verticalAlign: "middle",
+                marginRight: "5px",
               }}
             />
 
@@ -1027,43 +779,35 @@ export default function Prediction() {
 
           </div>
 
-
           <div className="stat-value">
-
             {coolingDecision}
-
           </div>
 
-
           <div className="stat-meta">
-            {coolingLabel}
+            Level {coolingLevel} / 2
           </div>
 
         </div>
 
-
-        {/* COOLING LEVEL */}
 
         <div className="stat">
 
           <div className="stat-label">
-            Cooling level
+            Predicted trend
           </div>
 
           <div className="stat-value">
 
-            {coolingLevel} / 2
+            {trend}
 
           </div>
 
           <div className="stat-meta">
-            0 = OFF · 1 = LOW · 2 = HIGH
+            {trendLabel}
           </div>
 
         </div>
 
-
-        {/* PELTIER */}
 
         <div className="stat">
 
@@ -1072,17 +816,14 @@ export default function Prediction() {
             <Power
               size={14}
               style={{
-                verticalAlign:
-                  "middle",
-                marginRight:
-                  "5px",
+                verticalAlign: "middle",
+                marginRight: "5px",
               }}
             />
 
             Peltier status
 
           </div>
-
 
           <div
             className={`stat-value ${
@@ -1098,7 +839,6 @@ export default function Prediction() {
 
           </div>
 
-
           <div className="stat-meta">
 
             {peltierOn
@@ -1113,7 +853,7 @@ export default function Prediction() {
 
 
       {/* ===================================================
-          PREDICTED TREND
+          TREND CARD
       =================================================== */}
 
       <div className="card prediction-trend">
@@ -1124,25 +864,13 @@ export default function Prediction() {
 
             <h3 className="card-title">
 
-              <TrendingUp
-                size={15}
-              />
+              <TrendingUp size={15} />
 
               Predicted trend
 
             </h3>
 
-
             <div className="card-sub">
-
-              ML prediction indicates the
-              temperature is{" "}
-
-              <b>
-                {trend}
-              </b>
-
-              {" · "}
 
               {trendLabel}
 
@@ -1162,7 +890,7 @@ export default function Prediction() {
 
 
       {/* ===================================================
-          TEMPERATURE FORECAST
+          FORECAST GRAPH
       =================================================== */}
 
       <div className="card prediction-chart">
@@ -1173,19 +901,16 @@ export default function Prediction() {
 
             <h3 className="card-title">
 
-              <TrendingUp
-                size={15}
-              />
+              <TrendingUp size={15} />
 
               Temperature forecast
 
             </h3>
 
-
             <div className="card-sub">
 
-              Live temperature followed by
-              ML-predicted future temperature
+              Current sensor reading and
+              future ML predictions
 
             </div>
 
@@ -1201,7 +926,7 @@ export default function Prediction() {
 
 
         {/* =================================================
-            PREDICTION SUMMARY
+            FORECAST SUMMARY
         ================================================= */}
 
         {hasPrediction && (
@@ -1209,32 +934,31 @@ export default function Prediction() {
           <div
             className="card-sub"
             style={{
-              marginBottom:
-                "12px",
-              marginTop:
-                "4px",
+              marginTop: "4px",
+              marginBottom: "12px",
             }}
           >
 
-            Current:{" "}
             <b>
               {current.toFixed(1)}°C
             </b>
 
             {" → "}
 
-            Predicted after{" "}
+            <b>
+              {finalPrediction.toFixed(1)}°C
+            </b>
+
+            {" over "}
+
             <b>
               {futureTemperatures.length * 5} min
             </b>
-            :{" "}
+
+            {" · Trend: "}
 
             <b>
-              {
-                futureTemperatures[
-                  futureTemperatures.length - 1
-                ].toFixed(1)
-              }°C
+              {trend}
             </b>
 
           </div>
@@ -1242,17 +966,20 @@ export default function Prediction() {
         )}
 
 
-        <div className="chart-box">
+        <div
+          className="chart-box"
+          style={{
+            minHeight: "320px",
+          }}
+        >
 
           {!hasPrediction ? (
 
             <div
               className="card-sub"
               style={{
-                padding:
-                  "40px 20px",
-                textAlign:
-                  "center",
+                padding: "60px 20px",
+                textAlign: "center",
               }}
             >
 
@@ -1261,8 +988,7 @@ export default function Prediction() {
 
               <br />
 
-              Waiting for a trained model
-              and sufficient prediction data.
+              Waiting for prediction data.
 
             </div>
 
@@ -1274,7 +1000,7 @@ export default function Prediction() {
             >
 
               <ComposedChart
-                data={data}
+                data={graphData}
                 margin={{
                   top: 10,
                   right: 20,
@@ -1283,7 +1009,6 @@ export default function Prediction() {
                 }}
               >
 
-
                 <CartesianGrid
                   stroke="#e7ebf1"
                   strokeDasharray="3 3"
@@ -1291,9 +1016,7 @@ export default function Prediction() {
                 />
 
 
-                {/* =========================================
-                    SAFE OPERATING RANGE
-                ========================================= */}
+                {/* SAFE RANGE */}
 
                 <ReferenceArea
                   y1={2}
@@ -1303,25 +1026,23 @@ export default function Prediction() {
                 />
 
 
-                {/* =========================================
-                    UPPER LIMIT
-                ========================================= */}
+                {/* UPPER LIMIT */}
 
                 <ReferenceLine
                   y={8}
                   stroke="#d94250"
                   strokeDasharray="4 4"
+                  label="8°C"
                 />
 
 
-                {/* =========================================
-                    LOWER LIMIT
-                ========================================= */}
+                {/* LOWER LIMIT */}
 
                 <ReferenceLine
                   y={2}
                   stroke="#d94250"
                   strokeDasharray="4 4"
+                  label="2°C"
                 />
 
 
@@ -1342,13 +1063,9 @@ export default function Prediction() {
                   tick={{
                     fontSize: 10,
                   }}
-                  width={40}
+                  width={45}
                 />
 
-
-                {/* =========================================
-                    TOOLTIP
-                ========================================= */}
 
                 <Tooltip
                   formatter={(
@@ -1357,27 +1074,21 @@ export default function Prediction() {
                   ) => {
 
                     if (
-                      value ===
-                        null ||
-                      value ===
-                        undefined
+                      value === null ||
+                      value === undefined
                     ) {
 
                       return null;
                     }
 
-
                     return [
 
                       `${Number(
                         value
-                      ).toFixed(1)}°C`,
+                      ).toFixed(2)}°C`,
 
-                      name ===
-                      "forecast"
-
+                      name === "predicted"
                         ? "ML Predicted"
-
                         : "Current",
 
                     ];
@@ -1386,37 +1097,41 @@ export default function Prediction() {
                 />
 
 
-                {/* =========================================
-                    CURRENT SENSOR VALUE
-                ========================================= */}
+                {/* =================================================
+                    CURRENT SENSOR
+                ================================================= */}
 
                 <Line
                   type="monotone"
-                  dataKey="temp"
+                  dataKey="temperature"
                   stroke="#2867e8"
                   strokeWidth={3}
                   dot={{
-                    r: 4,
+                    r: 5,
                   }}
                   connectNulls={false}
                   name="Current"
                 />
 
 
-                {/* =========================================
-                    FUTURE ML PREDICTION
-                ========================================= */}
+                {/* =================================================
+                    ML FUTURE PREDICTION
+                   
+                    Current value is included as the first
+                    point so the predicted line visibly starts
+                    from the current temperature.
+                ================================================= */}
 
                 <Line
                   type="monotone"
-                  dataKey="forecast"
+                  dataKey="predicted"
                   stroke="#c77a05"
                   strokeWidth={3}
                   strokeDasharray="7 5"
                   dot={{
                     r: 3,
                   }}
-                  connectNulls={false}
+                  connectNulls={true}
                   name="ML Predicted"
                 />
 
@@ -1430,7 +1145,7 @@ export default function Prediction() {
 
 
         {/* =================================================
-            GRAPH FOOTER
+            FOOTER
         ================================================= */}
 
         <div className="chart-footer">
@@ -1459,6 +1174,21 @@ export default function Prediction() {
 
           <span>
 
+            Projected:{" "}
+
+            <b>
+
+              {hasPrediction
+                ? `${finalPrediction.toFixed(1)}°C`
+                : "—"}
+
+            </b>
+
+          </span>
+
+
+          <span>
+
             Trend:{" "}
 
             <b>
@@ -1473,13 +1203,11 @@ export default function Prediction() {
 
 
       {/* ===================================================
-          INFORMATION
+          HOW IT WORKS
       =================================================== */}
 
       <div className="grid grid-2 prediction-info">
 
-
-        {/* HOW IT WORKS */}
 
         <div className="card">
 
@@ -1487,48 +1215,33 @@ export default function Prediction() {
             How the prediction works
           </h3>
 
-
           <div className="list">
 
             <div className="list-row">
-
               01 · Current sensor temperature
               is continuously observed.
-
             </div>
 
-
             <div className="list-row">
-
               02 · Historical readings are
               used as ML training data.
-
             </div>
 
-
             <div className="list-row">
-
               03 · The trained model predicts
               the next 20 temperature points.
-
             </div>
 
-
             <div className="list-row">
-
               04 · The predicted curve shows
               whether temperature is rising,
               falling, or stable.
-
             </div>
 
-
             <div className="list-row">
-
               05 · Cooling control uses the
-              current and predicted temperature
-              to determine the required level.
-
+              predicted temperature to determine
+              the required cooling level.
             </div>
 
           </div>
@@ -1536,46 +1249,32 @@ export default function Prediction() {
         </div>
 
 
-        {/* RECOMMENDED CHECKS */}
-
         <div className="card">
 
           <h3 className="card-title">
             Recommended checks
           </h3>
 
-
           <div className="list">
 
             <div className="list-row">
-
               • Confirm the refrigerator door
               is sealed.
-
             </div>
 
-
             <div className="list-row">
-
               • Check cooling/Peltier status.
-
             </div>
 
-
             <div className="list-row">
-
               • Check supply voltage and
               device connectivity.
-
             </div>
 
-
             <div className="list-row">
-
               • Review the predicted trend
-              before the temperature leaves
+              before temperature leaves
               the 2–8°C range.
-
             </div>
 
           </div>
