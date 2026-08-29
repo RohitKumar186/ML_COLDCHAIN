@@ -12,7 +12,6 @@ from src.config import (
 from src.data.preprocessing import create_features
 
 from src.models.cooling_model import (
-    load_cooling_model,
     FEATURES as COOLING_FEATURES
 )
 
@@ -22,9 +21,6 @@ from src.models.temperature_model import (
 )
 
 from src.control.controller import (
-    determine_mode,
-    has_enough_history,
-    pre_cooling_action,
     cooling_action,
     determine_ml_cooling_level,
     determine_trend
@@ -35,6 +31,31 @@ from src.auto_trainer import maybe_retrain
 
 # =========================================================
 # PREDICT
+#
+# ESP32
+#   ↓
+# Node Backend
+#   ↓
+# PostgreSQL history
+#   ↓
+# Feature generation
+#   ↓
+# Temperature ML model
+#   ↓
+# 20 future predictions
+#   ↓
+# ML cooling decision
+#   ↓
+# ESP32
+#
+# IMPORTANT:
+#
+# CURRENT TEMPERATURE DOES NOT STOP ML PREDICTION.
+#
+# Even if current temperature is > 12°C,
+# we still generate the 20-point forecast.
+#
+# Cooling decision is made AFTER seeing the forecast.
 # =========================================================
 
 def predict(
@@ -43,19 +64,54 @@ def predict(
     history=None
 ):
 
+    # =====================================================
+    # NORMALIZE INPUT
+    # =====================================================
+
     if history is None:
         history = []
 
 
+    inside_temp = float(
+        inside_temp
+    )
+
+    outside_temp = float(
+        outside_temp
+    )
+
+
     # =====================================================
     # AUTOMATIC TRAINING
+    #
+    # Latest history is passed to auto trainer.
     # =====================================================
 
-    maybe_retrain(history)
+    try:
+
+        maybe_retrain(
+            history
+        )
+
+    except Exception as e:
+
+        print(
+            "[AUTO TRAIN] Trigger error:",
+            str(e)
+        )
 
 
     # =====================================================
     # CONVERT HISTORY
+    #
+    # IMPORTANT:
+    #
+    # ALL valid temperature readings are used.
+    #
+    # We do NOT remove readings above 12°C.
+    #
+    # This is important because the ML model should learn
+    # warming/cooling behavior across the complete range.
     # =====================================================
 
     history_rows = []
@@ -73,6 +129,7 @@ def predict(
 
 
             if pd.isna(timestamp):
+
                 continue
 
 
@@ -92,20 +149,6 @@ def predict(
             )
 
 
-            mode_value = item.get(
-                "mode"
-            )
-
-
-            if mode_value is None:
-
-                mode_value = (
-                    "PRE_COOLING"
-                    if inside_value > 12
-                    else "ML_CONTROL"
-                )
-
-
             history_rows.append({
 
                 "timestamp":
@@ -117,8 +160,10 @@ def predict(
                 "outside_temp":
                     outside_value,
 
+                # IMPORTANT:
+                # Everything is usable ML history.
                 "mode":
-                    mode_value
+                    "ML_CONTROL"
 
             })
 
@@ -151,15 +196,13 @@ def predict(
             current_timestamp,
 
         "inside_temp":
-            float(inside_temp),
+            inside_temp,
 
         "outside_temp":
-            float(outside_temp),
+            outside_temp,
 
         "mode":
-            determine_mode(
-                inside_temp
-            )
+            "ML_CONTROL"
 
     }])
 
@@ -174,12 +217,16 @@ def predict(
             history_rows
         )
 
+
         full_history = pd.concat(
+
             [
                 history_df,
                 current
             ],
+
             ignore_index=True
+
         )
 
     else:
@@ -187,91 +234,46 @@ def predict(
         full_history = current.copy()
 
 
+    # =====================================================
+    # SORT CHRONOLOGICALLY
+    # =====================================================
+
     full_history = (
+
         full_history
-        .sort_values("timestamp")
-        .reset_index(drop=True)
-    )
 
+        .sort_values(
+            "timestamp"
+        )
 
-    # =====================================================
-    # CURRENT MODE
-    # =====================================================
+        .reset_index(
+            drop=True
+        )
 
-    mode = determine_mode(
-        inside_temp
-    )
-
-
-    # =====================================================
-    # PRE-COOLING
-    # =====================================================
-
-    if mode == "PRE_COOLING":
-
-        action = pre_cooling_action()
-
-        return {
-
-            "inside_temperature":
-                float(inside_temp),
-
-            "outside_temperature":
-                float(outside_temp),
-
-            "mode":
-                "PRE_COOLING",
-
-            "prediction_status":
-                "WAITING",
-
-            "history_count":
-                len(full_history),
-
-            "future_temperatures":
-                [],
-
-            "trend":
-                "STABLE",
-
-            "risk":
-                "high",
-
-            **action
-
-        }
-
-
-    # =====================================================
-    # ML CONTROL HISTORY
-    # =====================================================
-
-    ml_history = (
-        full_history[
-            full_history["mode"] ==
-            "ML_CONTROL"
-        ]
-        .copy()
     )
 
 
     history_count = len(
-        ml_history
+        full_history
     )
 
 
     # =====================================================
     # NOT ENOUGH HISTORY
+    #
+    # Need enough readings to create lag features.
     # =====================================================
 
-    if not has_enough_history(
-        history_count
-    ):
+    if history_count < MIN_HISTORY_READINGS:
 
         level = determine_ml_cooling_level(
+
             inside_temp,
+
             []
+
         )
+
 
         action = cooling_action(
             level
@@ -279,22 +281,25 @@ def predict(
 
 
         if level == 0:
+
             risk = "low"
 
         elif level == 1:
+
             risk = "medium"
 
         else:
+
             risk = "high"
 
 
         return {
 
             "inside_temperature":
-                float(inside_temp),
+                inside_temp,
 
             "outside_temperature":
-                float(outside_temp),
+                outside_temp,
 
             "mode":
                 "ML_CONTROL",
@@ -311,6 +316,24 @@ def predict(
             "cooling_level":
                 int(level),
 
+            "cooling_decision":
+                action.get(
+                    "cooling_decision",
+                    "OFF"
+                ),
+
+            "peltier":
+                action.get(
+                    "peltier",
+                    "OFF"
+                ),
+
+            "fan":
+                action.get(
+                    "fan",
+                    "OFF"
+                ),
+
             "future_temperatures":
                 [],
 
@@ -318,18 +341,18 @@ def predict(
                 "STABLE",
 
             "risk":
-                risk,
-
-            **action
+                risk
 
         }
 
 
     # =====================================================
-    # CHECK TEMPERATURE MODEL
+    # TEMPERATURE MODEL CHECK
     #
-    # Temperature prediction is independent from
-    # cooling model availability.
+    # Cooling model is NOT required to generate the
+    # future temperature forecast.
+    #
+    # Temperature model is the important model here.
     # =====================================================
 
     temperature_model_valid = (
@@ -343,15 +366,20 @@ def predict(
         os.path.getsize(
             TEMPERATURE_MODEL_PATH
         ) > 0
+
     )
 
 
     if not temperature_model_valid:
 
         level = determine_ml_cooling_level(
+
             inside_temp,
+
             []
+
         )
+
 
         action = cooling_action(
             level
@@ -359,22 +387,25 @@ def predict(
 
 
         if level == 0:
+
             risk = "low"
 
         elif level == 1:
+
             risk = "medium"
 
         else:
+
             risk = "high"
 
 
         return {
 
             "inside_temperature":
-                float(inside_temp),
+                inside_temp,
 
             "outside_temperature":
-                float(outside_temp),
+                outside_temp,
 
             "mode":
                 "ML_CONTROL",
@@ -388,6 +419,24 @@ def predict(
             "cooling_level":
                 int(level),
 
+            "cooling_decision":
+                action.get(
+                    "cooling_decision",
+                    "OFF"
+                ),
+
+            "peltier":
+                action.get(
+                    "peltier",
+                    "OFF"
+                ),
+
+            "fan":
+                action.get(
+                    "fan",
+                    "OFF"
+                ),
+
             "future_temperatures":
                 [],
 
@@ -398,15 +447,22 @@ def predict(
                 risk,
 
             "message":
-                "Temperature model is not trained yet.",
-
-            **action
+                "Temperature model is not trained yet."
 
         }
 
 
     # =====================================================
     # CREATE FEATURES
+    #
+    # This creates:
+    #
+    # inside_lag_1
+    # inside_lag_2
+    # inside_lag_5
+    # inside_lag_10
+    #
+    # and all other ML features.
     # =====================================================
 
     feature_history = create_features(
@@ -415,48 +471,71 @@ def predict(
 
 
     # =====================================================
-    # VALID FEATURE ROWS
+    # KEEP ONLY ROWS WITH REQUIRED FEATURES
     # =====================================================
 
-    feature_history = (
-        feature_history
-        .dropna(
-            subset=COOLING_FEATURES
-        )
-    )
+    available_features = [
+
+        feature
+
+        for feature in COOLING_FEATURES
+
+        if feature in feature_history.columns
+
+    ]
 
 
-    if feature_history.empty:
+    # -----------------------------------------------------
+    # Safety check
+    # -----------------------------------------------------
 
-        level = determine_ml_cooling_level(
-            inside_temp,
-            []
-        )
+    missing_features = [
 
-        action = cooling_action(
-            level
+        feature
+
+        for feature in COOLING_FEATURES
+
+        if feature not in feature_history.columns
+
+    ]
+
+
+    if missing_features:
+
+        print(
+            "[ML] Missing features:",
+            missing_features
         )
 
 
         return {
 
             "inside_temperature":
-                float(inside_temp),
+                inside_temp,
 
             "outside_temperature":
-                float(outside_temp),
+                outside_temp,
 
             "mode":
                 "ML_CONTROL",
 
             "prediction_status":
-                "COLLECTING_FEATURES",
+                "FEATURE_ERROR",
 
             "history_count":
                 history_count,
 
             "cooling_level":
-                int(level),
+                0,
+
+            "cooling_decision":
+                "OFF",
+
+            "peltier":
+                "OFF",
+
+            "fan":
+                "OFF",
 
             "future_temperatures":
                 [],
@@ -465,9 +544,107 @@ def predict(
                 "STABLE",
 
             "risk":
-                "medium",
+                "unknown",
 
-            **action
+            "message":
+                "Required ML features are missing."
+
+        }
+
+
+    feature_history = (
+
+        feature_history
+
+        .dropna(
+            subset=available_features
+        )
+
+    )
+
+
+    # =====================================================
+    # FEATURE HISTORY NOT READY
+    # =====================================================
+
+    if feature_history.empty:
+
+        level = determine_ml_cooling_level(
+
+            inside_temp,
+
+            []
+
+        )
+
+
+        action = cooling_action(
+            level
+        )
+
+
+        if level == 0:
+
+            risk = "low"
+
+        elif level == 1:
+
+            risk = "medium"
+
+        else:
+
+            risk = "high"
+
+
+        return {
+
+            "inside_temperature":
+                inside_temp,
+
+            "outside_temperature":
+                outside_temp,
+
+            "mode":
+                "ML_CONTROL",
+
+            "prediction_status":
+                "COLLECTING_HISTORY",
+
+            "history_count":
+                history_count,
+
+            "required_history":
+                MIN_HISTORY_READINGS,
+
+            "cooling_level":
+                int(level),
+
+            "cooling_decision":
+                action.get(
+                    "cooling_decision",
+                    "OFF"
+                ),
+
+            "peltier":
+                action.get(
+                    "peltier",
+                    "OFF"
+                ),
+
+            "fan":
+                action.get(
+                    "fan",
+                    "OFF"
+                ),
+
+            "future_temperatures":
+                [],
+
+            "trend":
+                "STABLE",
+
+            "risk":
+                risk
 
         }
 
@@ -476,22 +653,30 @@ def predict(
     # LATEST FEATURE ROW
     # =====================================================
 
-    latest = feature_history.iloc[-1:]
+    latest = (
 
+        feature_history
+
+        .iloc[
+            -1:
+        ]
+
+    )
+
+
+    # =====================================================
+    # INPUT FOR TEMPERATURE MODEL
+    #
+    # The temperature model uses the same feature set.
+    # =====================================================
 
     X = latest[
-        COOLING_FEATURES
+        available_features
     ]
 
 
     # =====================================================
-    # TEMPERATURE MODEL
-    #
-    # IMPORTANT:
-    #
-    # Temperature prediction happens FIRST.
-    #
-    # Cooling model is NOT required for this.
+    # LOAD TEMPERATURE MODEL
     # =====================================================
 
     try:
@@ -500,44 +685,102 @@ def predict(
             load_temperature_model()
         )
 
-
-        future_temperatures = (
-            predict_future_temperature(
-                temperature_model,
-                X
-            )
-        )
-
-
-        future_temperatures = [
-
-            round(
-                float(value),
-                2
-            )
-
-            for value in future_temperatures
-
-            if value is not None
-
-        ]
-
-
     except Exception as e:
 
         print(
-            "[PREDICTION] "
-            f"Temperature prediction failed: {e}"
+            "[ML] Temperature model load failed:",
+            str(e)
         )
 
 
         return {
 
             "inside_temperature":
-                float(inside_temp),
+                inside_temp,
 
             "outside_temperature":
-                float(outside_temp),
+                outside_temp,
+
+            "mode":
+                "ML_CONTROL",
+
+            "prediction_status":
+                "MODEL_LOAD_ERROR",
+
+            "history_count":
+                history_count,
+
+            "cooling_level":
+                0,
+
+            "cooling_decision":
+                "OFF",
+
+            "peltier":
+                "OFF",
+
+            "fan":
+                "OFF",
+
+            "future_temperatures":
+                [],
+
+            "trend":
+                "STABLE",
+
+            "risk":
+                "unknown",
+
+            "message":
+                str(e)
+
+        }
+
+
+    # =====================================================
+    # 20 FUTURE TEMPERATURE PREDICTIONS
+    #
+    # IMPORTANT:
+    #
+    # THIS RUNS REGARDLESS OF CURRENT TEMPERATURE.
+    #
+    # Current = 8°C
+    # Current = 12°C
+    # Current = 15°C
+    #
+    # All can be forecasted.
+    # =====================================================
+
+    try:
+
+        future_temperatures = (
+
+            predict_future_temperature(
+
+                temperature_model,
+
+                X
+
+            )
+
+        )
+
+
+    except Exception as e:
+
+        print(
+            "[ML] Future temperature prediction failed:",
+            str(e)
+        )
+
+
+        return {
+
+            "inside_temperature":
+                inside_temp,
+
+            "outside_temperature":
+                outside_temp,
 
             "mode":
                 "ML_CONTROL",
@@ -548,6 +791,18 @@ def predict(
             "history_count":
                 history_count,
 
+            "cooling_level":
+                0,
+
+            "cooling_decision":
+                "OFF",
+
+            "peltier":
+                "OFF",
+
+            "fan":
+                "OFF",
+
             "future_temperatures":
                 [],
 
@@ -555,7 +810,7 @@ def predict(
                 "STABLE",
 
             "risk":
-                "medium",
+                "unknown",
 
             "message":
                 str(e)
@@ -564,41 +819,21 @@ def predict(
 
 
     # =====================================================
-    # CHECK ACTUAL PREDICTION OUTPUT
+    # CLEAN PREDICTIONS
     # =====================================================
 
-    if not future_temperatures:
+    future_temperatures = [
 
-        return {
+        round(
+            float(value),
+            2
+        )
 
-            "inside_temperature":
-                float(inside_temp),
+        for value in future_temperatures
 
-            "outside_temperature":
-                float(outside_temp),
+        if value is not None
 
-            "mode":
-                "ML_CONTROL",
-
-            "prediction_status":
-                "NO_FORECAST",
-
-            "history_count":
-                history_count,
-
-            "future_temperatures":
-                [],
-
-            "trend":
-                "STABLE",
-
-            "risk":
-                "medium",
-
-            "message":
-                "Temperature model returned no future predictions."
-
-        }
+    ]
 
 
     # =====================================================
@@ -606,18 +841,49 @@ def predict(
     # =====================================================
 
     trend = determine_trend(
+
         inside_temp,
+
         future_temperatures
+
     )
 
 
     # =====================================================
-    # ML COOLING LEVEL
+    # ML COOLING DECISION
+    #
+    # THIS IS THE IMPORTANT PART.
+    #
+    # Decision uses:
+    #
+    # CURRENT TEMPERATURE
+    # +
+    # FUTURE ML PREDICTIONS
+    #
+    # Example:
+    #
+    # Current = 12
+    # Future max = 15
+    #
+    # → Level 2
+    #
+    # Current = 11
+    # Future min = 8
+    #
+    # → Level 1
+    #
+    # Current = 7
+    # Future = 5
+    #
+    # → Level 0
     # =====================================================
 
     level = determine_ml_cooling_level(
+
         inside_temp,
+
         future_temperatures
+
     )
 
 
@@ -635,28 +901,37 @@ def predict(
     # =====================================================
 
     if level == 0:
+
         risk = "low"
 
     elif level == 1:
+
         risk = "medium"
 
     else:
+
         risk = "high"
 
 
     # =====================================================
-    # PROJECTED RANGE
-    #
-    # Explicitly calculated from future predictions.
+    # FORECAST MIN / MAX
     # =====================================================
 
-    projected_min = min(
-        future_temperatures
-    )
+    if future_temperatures:
 
-    projected_max = max(
-        future_temperatures
-    )
+        forecast_min = min(
+            future_temperatures
+        )
+
+        forecast_max = max(
+            future_temperatures
+        )
+
+    else:
+
+        forecast_min = None
+
+        forecast_max = None
 
 
     # =====================================================
@@ -666,10 +941,10 @@ def predict(
     return {
 
         "inside_temperature":
-            float(inside_temp),
+            inside_temp,
 
         "outside_temperature":
-            float(outside_temp),
+            outside_temp,
 
         "mode":
             "ML_CONTROL",
@@ -704,21 +979,44 @@ def predict(
         "risk":
             risk,
 
-        "trend":
-            trend,
-
         "future_temperatures":
             future_temperatures,
 
-        "projected_min":
-            projected_min,
+        "trend":
+            trend,
 
-        "projected_max":
-            projected_max,
+        "forecast_min":
+            (
+                round(
+                    forecast_min,
+                    2
+                )
+
+                if forecast_min is not None
+
+                else None
+            ),
+
+        "forecast_max":
+            (
+                round(
+                    forecast_max,
+                    2
+                )
+
+                if forecast_max is not None
+
+                else None
+            ),
 
         "future_points":
             len(
                 future_temperatures
-            )
+            ),
+
+        "forecast_minutes":
+            len(
+                future_temperatures
+            ) * 5
 
     }

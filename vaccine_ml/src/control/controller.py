@@ -1,8 +1,42 @@
-from src.config import (
-    PRE_COOLING_THRESHOLD,
-    STABLE_THRESHOLD,
-    MIN_HISTORY_READINGS
-)
+# =========================================================
+# COLD CHAIN ML CONTROL
+# =========================================================
+#
+# Cooling decision is based on:
+#
+# 1. Current temperature
+# 2. Future ML predicted temperatures
+#
+# NOT current temperature alone.
+#
+# Safe storage range:
+#       2°C - 8°C
+#
+# Cooling levels:
+#       0 = OFF
+#       1 = LOW
+#       2 = HIGH
+# =========================================================
+
+
+# =========================================================
+# CONFIGURATION
+# =========================================================
+
+SAFE_MIN = 2.0
+SAFE_MAX = 8.0
+
+# Early-warning boundary.
+# If forecast approaches this level, start cooling.
+
+WATCH_TEMP = 7.0
+
+# Strong warming condition.
+HIGH_RISE = 1.0
+
+# Small tolerance to avoid unnecessary switching.
+
+TREND_TOLERANCE = 0.20
 
 
 # =========================================================
@@ -11,157 +45,60 @@ from src.config import (
 
 def determine_mode(inside_temp):
 
-    inside_temp = float(inside_temp)
+    """
+    Mode is now always ML_CONTROL.
 
-    if inside_temp > PRE_COOLING_THRESHOLD:
-        return "PRE_COOLING"
+    IMPORTANT:
+    We do NOT stop ML prediction when temperature
+    goes above 12°C.
+
+    The forecast itself decides the cooling level.
+    """
 
     return "ML_CONTROL"
 
 
 # =========================================================
-# HISTORY
+# HISTORY CHECK
 # =========================================================
 
 def has_enough_history(history_count):
 
-    return history_count >= MIN_HISTORY_READINGS
+    """
+    Minimum history required before ML forecasting.
+
+    The feature generator requires at least the
+    10-step lag history.
+    """
+
+    return history_count >= 10
 
 
 # =========================================================
 # PRE-COOLING ACTION
-#
-# Temperature > 12°C
 # =========================================================
 
 def pre_cooling_action():
 
+    """
+    Kept for compatibility with existing imports.
+
+    Actual system now uses forecast-based control,
+    so PRE_COOLING is no longer used as a separate
+    prediction-blocking mode.
+    """
+
     return {
+
         "cooling_level": 2,
+
         "cooling_decision": "HIGH",
+
         "peltier": "ON",
+
         "fan": "ON"
+
     }
-
-
-# =========================================================
-# BASIC COOLING LEVEL
-#
-# Used as a baseline.
-#
-# > 12°C  → Level 2
-# 8-12°C  → Level 1
-# < 8°C   → Level 0
-# =========================================================
-
-def determine_cooling_level(inside_temp):
-
-    inside_temp = float(inside_temp)
-
-    if inside_temp > 12:
-        return 2
-
-    if inside_temp >= 8:
-        return 1
-
-    return 0
-
-
-# =========================================================
-# FUTURE-AWARE COOLING LEVEL
-#
-# Current temperature + ML future prediction
-#
-# The future prediction is used to prevent the
-# temperature from leaving the 2-8°C safe range.
-# =========================================================
-
-def determine_ml_cooling_level(
-    inside_temp,
-    future_temperatures
-):
-
-    inside_temp = float(inside_temp)
-
-    future_temperatures = [
-
-        float(value)
-
-        for value in future_temperatures
-
-        if value is not None
-
-    ]
-
-
-    # -----------------------------------------------------
-    # No future prediction
-    #
-    # Fall back to current temperature.
-    # -----------------------------------------------------
-
-    if not future_temperatures:
-
-        return determine_cooling_level(
-            inside_temp
-        )
-
-
-    max_future = max(
-        future_temperatures
-    )
-
-
-    min_future = min(
-        future_temperatures
-    )
-
-
-    average_future = (
-        sum(future_temperatures)
-        / len(future_temperatures)
-    )
-
-
-    # =====================================================
-    # HIGH COOLING
-    #
-    # Current already high OR future temperature is
-    # predicted to rise significantly above safe range.
-    # =====================================================
-
-    if (
-        inside_temp > 12
-        or max_future > 10
-    ):
-
-        return 2
-
-
-    # =====================================================
-    # LOW COOLING
-    #
-    # Temperature is inside/near safe range but future
-    # prediction shows warming.
-    # =====================================================
-
-    if (
-        inside_temp >= 8
-        or max_future > 8
-        or average_future > 8
-    ):
-
-        return 1
-
-
-    # =====================================================
-    # LOW TEMPERATURE
-    #
-    # If temperature is safely below 8°C and future
-    # prediction is also safe, cooling can remain OFF.
-    # =====================================================
-
-    return 0
 
 
 # =========================================================
@@ -170,12 +107,20 @@ def determine_ml_cooling_level(
 
 def cooling_action(level):
 
+    """
+    Convert cooling level into hardware action.
+
+    0 = OFF
+    1 = LOW
+    2 = HIGH
+    """
+
     level = int(level)
 
 
-    # =====================================================
+    # -----------------------------------------------------
     # OFF
-    # =====================================================
+    # -----------------------------------------------------
 
     if level <= 0:
 
@@ -183,21 +128,18 @@ def cooling_action(level):
 
             "cooling_level": 0,
 
-            "cooling_decision":
-                "OFF",
+            "cooling_decision": "OFF",
 
-            "peltier":
-                "OFF",
+            "peltier": "OFF",
 
-            "fan":
-                "OFF"
+            "fan": "OFF"
 
         }
 
 
-    # =====================================================
+    # -----------------------------------------------------
     # LOW
-    # =====================================================
+    # -----------------------------------------------------
 
     if level == 1:
 
@@ -205,36 +147,332 @@ def cooling_action(level):
 
             "cooling_level": 1,
 
-            "cooling_decision":
-                "LOW",
+            "cooling_decision": "LOW",
 
-            "peltier":
-                "ON",
+            "peltier": "ON",
 
-            "fan":
-                "ON"
+            "fan": "ON"
 
         }
 
 
-    # =====================================================
+    # -----------------------------------------------------
     # HIGH
-    # =====================================================
+    # -----------------------------------------------------
 
     return {
 
         "cooling_level": 2,
 
-        "cooling_decision":
-            "HIGH",
+        "cooling_decision": "HIGH",
 
-        "peltier":
-            "ON",
+        "peltier": "ON",
 
-        "fan":
-            "ON"
+        "fan": "ON"
 
     }
+
+
+# =========================================================
+# ML COOLING LEVEL
+# =========================================================
+
+def determine_ml_cooling_level(
+    inside_temp,
+    future_temperatures
+):
+
+    """
+    Forecast-based cooling controller.
+
+    Examples:
+
+    Current = 12°C
+    Forecast reaches 15°C
+        -> HIGH
+
+    Current = 11°C
+    Forecast falls toward 8°C
+        -> LOW
+
+    Current = 7°C
+    Forecast falls toward 5°C
+        -> OFF
+
+    Current = 6°C
+    Forecast rises toward 10°C
+        -> HIGH
+
+
+    Priority:
+
+    1. Strong predicted overheating
+    2. Predicted warming outside safe range
+    3. Current temperature already above safe range
+    4. Predicted approach toward upper limit
+    5. Predicted cooling toward safe range
+    6. Otherwise OFF
+    """
+
+    current = float(
+        inside_temp
+    )
+
+
+    # =====================================================
+    # CLEAN FUTURE VALUES
+    # =====================================================
+
+    if future_temperatures is None:
+
+        future = []
+
+    else:
+
+        future = []
+
+        for value in future_temperatures:
+
+            try:
+
+                value = float(value)
+
+                future.append(value)
+
+            except (
+                TypeError,
+                ValueError
+            ):
+
+                continue
+
+
+    # =====================================================
+    # NO FORECAST
+    #
+    # If ML forecast is unavailable, use conservative
+    # current-temperature fallback.
+    # =====================================================
+
+    if not future:
+
+        if current > SAFE_MAX:
+
+            return 2
+
+
+        if current >= WATCH_TEMP:
+
+            return 1
+
+
+        return 0
+
+
+    # =====================================================
+    # FORECAST STATISTICS
+    # =====================================================
+
+    forecast_min = min(
+        future
+    )
+
+    forecast_max = max(
+        future
+    )
+
+    first_prediction = future[0]
+
+    last_prediction = future[-1]
+
+
+    # Maximum warming relative to current.
+
+    max_rise = (
+        forecast_max -
+        current
+    )
+
+
+    # Final forecast change.
+
+    final_change = (
+        last_prediction -
+        current
+    )
+
+
+    # =====================================================
+    # LEVEL 2 — HIGH
+    #
+    # Strong future overheating.
+    # =====================================================
+
+    # Case:
+    #
+    # Current 12°C
+    # Forecast 15°C
+    #
+    # HIGH immediately.
+
+    if forecast_max > SAFE_MAX:
+
+        # If it is significantly above the safe range
+        # or warming strongly, use HIGH.
+
+        if (
+            forecast_max >= 9.0
+            or
+            max_rise >= HIGH_RISE
+            or
+            current >= 12.0
+        ):
+
+            return 2
+
+
+    # =====================================================
+    # CURRENT ALREADY HIGH
+    # =====================================================
+
+    if current > SAFE_MAX:
+
+        return 2
+
+
+    # =====================================================
+    # STRONG WARMING TOWARD HIGH TEMPERATURE
+    # =====================================================
+
+    if (
+        max_rise >= HIGH_RISE
+        and
+        forecast_max >= WATCH_TEMP
+    ):
+
+        return 2
+
+
+    # =====================================================
+    # LEVEL 1 — LOW
+    #
+    # Current is above safe range but forecast is
+    # moving down toward the safe region.
+    #
+    # Example:
+    #
+    # Current = 11
+    # Forecast = 10.8 ... 8.0
+    #
+    # LOW.
+    # =====================================================
+
+    if current > SAFE_MAX:
+
+        if (
+            last_prediction < current
+            and
+            forecast_min <= SAFE_MAX
+        ):
+
+            return 1
+
+
+        # Still above safe range but not aggressively
+        # warming.
+
+        return 1
+
+
+    # =====================================================
+    # CURRENT WITHIN SAFE RANGE
+    # =====================================================
+
+    if (
+        SAFE_MIN <= current <= SAFE_MAX
+    ):
+
+
+        # -------------------------------------------------
+        # Predicted future overheating
+        # -------------------------------------------------
+
+        if forecast_max > SAFE_MAX:
+
+            # Strong future rise -> HIGH
+
+            if (
+                max_rise >= HIGH_RISE
+                or
+                forecast_max >= 9.0
+            ):
+
+                return 2
+
+
+            # Mild approach above safe range -> LOW
+
+            return 1
+
+
+        # -------------------------------------------------
+        # Predicted approach to upper boundary
+        # -------------------------------------------------
+
+        if (
+            forecast_max >= WATCH_TEMP
+            and
+            final_change > TREND_TOLERANCE
+        ):
+
+            return 1
+
+
+        # -------------------------------------------------
+        # Predicted cooling
+        #
+        # Example:
+        #
+        # Current = 7
+        # Future = 6, 5, 4...
+        #
+        # No cooling needed.
+        # -------------------------------------------------
+
+        if (
+            final_change < -TREND_TOLERANCE
+            and
+            forecast_max <= SAFE_MAX
+        ):
+
+            return 0
+
+
+        # -------------------------------------------------
+        # Stable safe temperature
+        # -------------------------------------------------
+
+        return 0
+
+
+    # =====================================================
+    # CURRENT BELOW SAFE RANGE
+    # =====================================================
+
+    if current < SAFE_MIN:
+
+        # Temperature is already too cold.
+        #
+        # Never increase cooling here.
+
+        return 0
+
+
+    # =====================================================
+    # FALLBACK
+    # =====================================================
+
+    return 0
 
 
 # =========================================================
@@ -242,61 +480,91 @@ def cooling_action(level):
 # =========================================================
 
 def determine_trend(
-    current_temperature,
+    inside_temp,
     future_temperatures
 ):
 
+    """
+    Determine overall forecast direction.
+
+    UP:
+        future temperature rises
+
+    DOWN:
+        future temperature falls
+
+    STABLE:
+        little/no meaningful change
+    """
+
+    current = float(
+        inside_temp
+    )
+
+
     if not future_temperatures:
 
         return "STABLE"
 
 
-    current_temperature = float(
-        current_temperature
-    )
+    try:
 
+        future = [
 
-    future_temperatures = [
+            float(value)
 
-        float(value)
+            for value in future_temperatures
 
-        for value in future_temperatures
+        ]
 
-        if value is not None
-
-    ]
-
-
-    if not future_temperatures:
+    except (
+        TypeError,
+        ValueError
+    ):
 
         return "STABLE"
 
 
-    average_future = (
+    if not future:
 
-        sum(future_temperatures)
+        return "STABLE"
 
-        / len(future_temperatures)
 
+    # =====================================================
+    # USE BOTH FIRST AND FINAL PREDICTION
+    # =====================================================
+
+    first = future[0]
+
+    final = future[-1]
+
+
+    change = (
+        final -
+        current
     )
 
 
-    difference = (
+    # =====================================================
+    # UP
+    # =====================================================
 
-        average_future
-        - current_temperature
-
-    )
-
-
-    if difference > STABLE_THRESHOLD:
+    if change > TREND_TOLERANCE:
 
         return "UP"
 
 
-    if difference < -STABLE_THRESHOLD:
+    # =====================================================
+    # DOWN
+    # =====================================================
+
+    if change < -TREND_TOLERANCE:
 
         return "DOWN"
 
+
+    # =====================================================
+    # STABLE
+    # =====================================================
 
     return "STABLE"
