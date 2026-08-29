@@ -26,23 +26,29 @@ from src.control.controller import (
     has_enough_history,
     pre_cooling_action,
     cooling_action,
-    determine_cooling_level,
+    determine_ml_cooling_level,
     determine_trend
 )
+
+from src.auto_trainer import maybe_retrain
 
 
 # =========================================================
 # PREDICT
 #
-# Current ESP32 reading
-#        +
-# Recent PostgreSQL history
-#        ↓
-# Feature generation
-#        ↓
-# ML prediction
-#        ↓
-# Cooling decision
+# ESP32
+#   ↓
+# Node Backend
+#   ↓
+# PostgreSQL history
+#   ↓
+# Flask ML
+#   ↓
+# Future temperature prediction
+#   ↓
+# ML cooling decision
+#   ↓
+# ESP32
 # =========================================================
 
 def predict(
@@ -60,27 +66,57 @@ def predict(
 
 
     # =====================================================
-    # CONVERT LIVE HISTORY TO DATAFRAME
+    # AUTOMATIC TRAINING
+    #
+    # Every prediction request brings the latest
+    # PostgreSQL sensor history.
+    #
+    # auto_trainer decides whether enough new data
+    # exists for training/retraining.
+    #
+    # Training runs in a background thread so the
+    # prediction API is not blocked.
+    # =====================================================
+
+    maybe_retrain(history)
+
+
+    # =====================================================
+    # CONVERT HISTORY
     # =====================================================
 
     history_rows = []
+
 
     for item in history:
 
         try:
 
             # -------------------------------------------------
-            # Normalize every incoming timestamp to UTC,
-            # then remove timezone information.
+            # Normalize timestamps to UTC.
             #
             # This prevents:
-            # "Cannot compare tz-naive and tz-aware timestamps"
+            # tz-naive vs tz-aware timestamp errors.
             # -------------------------------------------------
 
             timestamp = pd.to_datetime(
                 item.get("timestamp"),
+                errors="coerce",
                 utc=True
-            ).tz_localize(None)
+            )
+
+
+            if pd.isna(timestamp):
+                continue
+
+
+            # Convert to timezone-naive UTC timestamp
+            # so all timestamps have the same format.
+
+            timestamp = (
+                timestamp
+                .tz_localize(None)
+            )
 
 
             inside_value = float(
@@ -93,7 +129,9 @@ def predict(
             )
 
 
-            mode_value = item.get("mode")
+            mode_value = item.get(
+                "mode"
+            )
 
 
             if mode_value is None:
@@ -127,7 +165,8 @@ def predict(
             ValueError
         ):
 
-            # Ignore invalid history rows
+            # Ignore invalid history rows.
+
             continue
 
 
@@ -135,31 +174,33 @@ def predict(
     # CURRENT READING
     # =====================================================
 
-    current = pd.DataFrame([
-        {
+    current_timestamp = (
+        datetime.now(
+            timezone.utc
+        )
+        .replace(
+            tzinfo=None
+        )
+    )
 
-            # Keep current timestamp in the SAME format
-            # as normalized history timestamps.
-            "timestamp":
-                datetime.now(
-                    timezone.utc
-                ).replace(
-                    tzinfo=None
-                ),
 
-            "inside_temp":
-                float(inside_temp),
+    current = pd.DataFrame([{
 
-            "outside_temp":
-                float(outside_temp),
+        "timestamp":
+            current_timestamp,
 
-            "mode":
-                determine_mode(
-                    inside_temp
-                )
+        "inside_temp":
+            float(inside_temp),
 
-        }
-    ])
+        "outside_temp":
+            float(outside_temp),
+
+        "mode":
+            determine_mode(
+                inside_temp
+            )
+
+    }])
 
 
     # =====================================================
@@ -172,17 +213,23 @@ def predict(
             history_rows
         )
 
+
         full_history = pd.concat(
+
             [
                 history_df,
                 current
             ],
+
             ignore_index=True
+
         )
 
     else:
 
-        full_history = current.copy()
+        full_history = (
+            current.copy()
+        )
 
 
     # =====================================================
@@ -190,13 +237,17 @@ def predict(
     # =====================================================
 
     full_history = (
+
         full_history
+
         .sort_values(
             "timestamp"
         )
+
         .reset_index(
             drop=True
         )
+
     )
 
 
@@ -212,12 +263,17 @@ def predict(
     # =====================================================
     # PRE-COOLING
     #
-    # > 12°C
+    # Temperature > 12°C
+    #
+    # Full cooling is used until the refrigerator
+    # enters the ML_CONTROL region.
     # =====================================================
 
     if mode == "PRE_COOLING":
 
-        action = pre_cooling_action()
+        action = (
+            pre_cooling_action()
+        )
 
 
         return {
@@ -247,6 +303,7 @@ def predict(
                 "high",
 
             **action
+
         }
 
 
@@ -254,10 +311,16 @@ def predict(
     # ML CONTROL HISTORY
     # =====================================================
 
-    ml_history = full_history[
-        full_history["mode"] ==
-        "ML_CONTROL"
-    ].copy()
+    ml_history = (
+
+        full_history[
+            full_history["mode"] ==
+            "ML_CONTROL"
+        ]
+
+        .copy()
+
+    )
 
 
     history_count = len(
@@ -267,14 +330,20 @@ def predict(
 
     # =====================================================
     # NOT ENOUGH HISTORY
+    #
+    # Wait until the minimum history required by the
+    # temperature model is available.
     # =====================================================
 
     if not has_enough_history(
         history_count
     ):
 
-        level = determine_cooling_level(
-            inside_temp
+        level = (
+            determine_ml_cooling_level(
+                inside_temp,
+                []
+            )
         )
 
 
@@ -282,14 +351,6 @@ def predict(
             level
         )
 
-
-        # -------------------------------------------------
-        # RISK
-        #
-        # 0 → LOW
-        # 1 → MEDIUM
-        # 2 → HIGH
-        # -------------------------------------------------
 
         if level == 0:
 
@@ -324,6 +385,9 @@ def predict(
             "required_history":
                 MIN_HISTORY_READINGS,
 
+            "cooling_level":
+                int(level),
+
             "future_temperatures":
                 [],
 
@@ -334,29 +398,61 @@ def predict(
                 risk,
 
             **action
+
         }
 
 
     # =====================================================
-    # CHECK MODEL FILES
+    # CHECK TRAINED MODELS
+    #
+    # IMPORTANT:
+    # os.path.exists() alone is not enough.
+    #
+    # A zero-byte .pkl file technically exists but is
+    # not a usable model.
     # =====================================================
 
-    if (
+    cooling_model_valid = (
 
-        not os.path.exists(
+        os.path.isfile(
             COOLING_MODEL_PATH
         )
 
-        or
+        and
 
-        not os.path.exists(
+        os.path.getsize(
+            COOLING_MODEL_PATH
+        ) > 0
+
+    )
+
+
+    temperature_model_valid = (
+
+        os.path.isfile(
             TEMPERATURE_MODEL_PATH
         )
 
+        and
+
+        os.path.getsize(
+            TEMPERATURE_MODEL_PATH
+        ) > 0
+
+    )
+
+
+    if (
+        not cooling_model_valid
+        or
+        not temperature_model_valid
     ):
 
-        level = determine_cooling_level(
-            inside_temp
+        level = (
+            determine_ml_cooling_level(
+                inside_temp,
+                []
+            )
         )
 
 
@@ -395,6 +491,9 @@ def predict(
             "history_count":
                 history_count,
 
+            "cooling_level":
+                int(level),
+
             "future_temperatures":
                 [],
 
@@ -408,6 +507,7 @@ def predict(
                 "Models are not trained yet.",
 
             **action
+
         }
 
 
@@ -415,8 +515,10 @@ def predict(
     # CREATE FEATURES
     # =====================================================
 
-    feature_history = create_features(
-        full_history
+    feature_history = (
+        create_features(
+            full_history
+        )
     )
 
 
@@ -424,8 +526,14 @@ def predict(
     # KEEP ONLY VALID FEATURE ROWS
     # =====================================================
 
-    feature_history = feature_history.dropna(
-        subset=COOLING_FEATURES
+    feature_history = (
+
+        feature_history
+
+        .dropna(
+            subset=COOLING_FEATURES
+        )
+
     )
 
 
@@ -435,8 +543,11 @@ def predict(
 
     if feature_history.empty:
 
-        level = determine_cooling_level(
-            inside_temp
+        level = (
+            determine_ml_cooling_level(
+                inside_temp,
+                []
+            )
         )
 
 
@@ -478,6 +589,9 @@ def predict(
             "required_history":
                 MIN_HISTORY_READINGS,
 
+            "cooling_level":
+                int(level),
+
             "future_temperatures":
                 [],
 
@@ -488,6 +602,7 @@ def predict(
                 risk,
 
             **action
+
         }
 
 
@@ -495,9 +610,11 @@ def predict(
     # LATEST FEATURE ROW
     # =====================================================
 
-    latest = feature_history.iloc[
-        -1:
-    ]
+    latest = (
+        feature_history.iloc[
+            -1:
+        ]
+    )
 
 
     X = latest[
@@ -520,29 +637,30 @@ def predict(
 
 
     # =====================================================
-    # COOLING LEVEL
-    #
-    # Current temperature is authoritative:
-    #
-    # > 12°C → Level 2
-    # 8–12°C → Level 1
-    # < 8°C  → Level 0
-    # =====================================================
-
-    level = determine_cooling_level(
-        inside_temp
-    )
-
-
-    # =====================================================
     # FUTURE TEMPERATURE PREDICTION
+    #
+    # FUTURE_POINTS = 20
+    #
+    # Expected output:
+    #
+    # [
+    #   future_1,
+    #   future_2,
+    #   ...
+    #   future_20
+    # ]
     # =====================================================
 
     future_temperatures = (
+
         predict_future_temperature(
+
             temperature_model,
+
             X
+
         )
+
     )
 
 
@@ -555,6 +673,8 @@ def predict(
 
         for value in
         future_temperatures
+
+        if value is not None
 
     ]
 
@@ -573,6 +693,31 @@ def predict(
 
 
     # =====================================================
+    # ML-AWARE COOLING LEVEL
+    #
+    # Uses:
+    #
+    # 1. Current temperature
+    # 2. Future predicted temperatures
+    #
+    # This prevents the cooling decision from being based
+    # only on the current temperature.
+    # =====================================================
+
+    level = (
+
+        determine_ml_cooling_level(
+
+            inside_temp,
+
+            future_temperatures
+
+        )
+
+    )
+
+
+    # =====================================================
     # COOLING ACTION
     # =====================================================
 
@@ -583,10 +728,6 @@ def predict(
 
     # =====================================================
     # RISK
-    #
-    # 0 → LOW
-    # 1 → MEDIUM
-    # 2 → HIGH
     # =====================================================
 
     if level == 0:
@@ -626,6 +767,24 @@ def predict(
         "cooling_level":
             int(level),
 
+        "cooling_decision":
+            action.get(
+                "cooling_decision",
+                "OFF"
+            ),
+
+        "peltier":
+            action.get(
+                "peltier",
+                "OFF"
+            ),
+
+        "fan":
+            action.get(
+                "fan",
+                "OFF"
+            ),
+
         "risk":
             risk,
 
@@ -633,7 +792,6 @@ def predict(
             future_temperatures,
 
         "trend":
-            trend,
+            trend
 
-        **action
     }

@@ -43,6 +43,23 @@ _training = False
 
 
 # =========================================================
+# CHECK MODEL FILE
+#
+# exists() alone is NOT enough.
+#
+# A 0-byte .pkl file technically exists, but it is not
+# a valid trained model.
+# =========================================================
+
+def valid_model_file(path):
+
+    return (
+        os.path.isfile(path)
+        and os.path.getsize(path) > 0
+    )
+
+
+# =========================================================
 # PREPARE HISTORY
 # =========================================================
 
@@ -131,6 +148,7 @@ def prepare_training_data(history):
 
             })
 
+
         except (
             TypeError,
             ValueError
@@ -149,24 +167,38 @@ def prepare_training_data(history):
     )
 
 
+    # =====================================================
+    # NORMALIZE TIMESTAMP
+    # =====================================================
+
     df["timestamp"] = (
+
         pd.to_datetime(
             df["timestamp"],
             utc=True
         )
+
         .dt
         .tz_localize(None)
+
     )
 
 
     return (
         df
-        .sort_values("timestamp")
+
+        .sort_values(
+            "timestamp"
+        )
+
         .drop_duplicates(
             subset=["timestamp"],
             keep="last"
         )
-        .reset_index(drop=True)
+
+        .reset_index(
+            drop=True
+        )
     )
 
 
@@ -179,6 +211,10 @@ def train_from_history(history):
     global _last_trained_count
     global _training
 
+
+    # =====================================================
+    # PREVENT TWO TRAINING JOBS AT ONCE
+    # =====================================================
 
     with _lock:
 
@@ -196,6 +232,10 @@ def train_from_history(history):
 
 
     try:
+
+        # =================================================
+        # PREPARE RAW HISTORY
+        # =================================================
 
         df = prepare_training_data(
             history
@@ -217,20 +257,28 @@ def train_from_history(history):
 
         print()
         print("=" * 60)
-        print("          AUTOMATIC MODEL TRAINING")
+        print(
+            "       AUTOMATIC MODEL TRAINING"
+        )
         print("=" * 60)
 
+
         print(
-            f"Valid readings: {valid_count}"
+            f"Valid readings: "
+            f"{valid_count}"
         )
 
+
+        # =================================================
+        # MINIMUM DATA CHECK
+        # =================================================
 
         if valid_count < MIN_TRAINING_ROWS:
 
             print(
                 f"Need at least "
                 f"{MIN_TRAINING_ROWS} "
-                f"rows."
+                f"valid readings."
             )
 
             return False
@@ -251,7 +299,7 @@ def train_from_history(history):
 
             print(
                 "[AUTO TRAIN] "
-                "Processed dataset empty."
+                "Processed dataset is empty."
             )
 
             return False
@@ -260,6 +308,37 @@ def train_from_history(history):
         print(
             f"Training rows: "
             f"{len(processed)}"
+        )
+
+
+        # =================================================
+        # SAVE PROCESSED DATASET
+        # =================================================
+
+        processed_directory = (
+            os.path.dirname(
+                PROCESSED_DATA_PATH
+            )
+        )
+
+
+        if processed_directory:
+
+            os.makedirs(
+                processed_directory,
+                exist_ok=True
+            )
+
+
+        processed.to_csv(
+            PROCESSED_DATA_PATH,
+            index=False
+        )
+
+
+        print(
+            f"Training dataset saved: "
+            f"{PROCESSED_DATA_PATH}"
         )
 
 
@@ -274,7 +353,24 @@ def train_from_history(history):
         )
 
 
-        train_cooling_model()
+        cooling_model = (
+            train_cooling_model()
+        )
+
+
+        if not valid_model_file(
+            COOLING_MODEL_PATH
+        ):
+
+            raise RuntimeError(
+                "Cooling model was not saved correctly."
+            )
+
+
+        print(
+            "[AUTO TRAIN] "
+            "Cooling model saved successfully."
+        )
 
 
         # =================================================
@@ -288,13 +384,38 @@ def train_from_history(history):
         )
 
 
-        train_temperature_model(
-            processed
+        temperature_model = (
+            train_temperature_model(
+                processed
+            )
         )
 
 
+        if not valid_model_file(
+            TEMPERATURE_MODEL_PATH
+        ):
+
+            raise RuntimeError(
+                "Temperature model was not saved correctly."
+            )
+
+
+        print(
+            "[AUTO TRAIN] "
+            "Temperature model saved successfully."
+        )
+
+
+        # =================================================
+        # UPDATE TRAINING STATE
+        # =================================================
+
         _last_trained_count = valid_count
 
+
+        # =================================================
+        # FINAL
+        # =================================================
 
         print()
         print(
@@ -302,15 +423,24 @@ def train_from_history(history):
             "Models successfully updated."
         )
 
+
         print(
             f"Cooling model: "
             f"{COOLING_MODEL_PATH}"
         )
 
+
         print(
             f"Temperature model: "
             f"{TEMPERATURE_MODEL_PATH}"
         )
+
+
+        print(
+            f"Future points: "
+            f"20"
+        )
+
 
         print("=" * 60)
 
@@ -320,6 +450,7 @@ def train_from_history(history):
 
     except Exception as e:
 
+        print()
         print(
             "[AUTO TRAIN] "
             f"Training failed: {e}"
@@ -357,28 +488,39 @@ def should_retrain(history):
     valid_count = len(df)
 
 
+    # =====================================================
+    # NOT ENOUGH DATA
+    # =====================================================
+
     if valid_count < MIN_TRAINING_ROWS:
 
         return False
 
 
-    # First training
+    # =====================================================
+    # FIRST TRAINING
+    #
+    # IMPORTANT:
+    # Check FILE SIZE, not only existence.
+    # =====================================================
 
-    if not os.path.exists(
+    if not valid_model_file(
         COOLING_MODEL_PATH
     ):
 
         return True
 
 
-    if not os.path.exists(
+    if not valid_model_file(
         TEMPERATURE_MODEL_PATH
     ):
 
         return True
 
 
-    # New data threshold
+    # =====================================================
+    # RETRAIN AFTER NEW DATA
+    # =====================================================
 
     if (
         valid_count
