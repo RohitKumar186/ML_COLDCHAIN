@@ -7,48 +7,171 @@ const ML_URL =
   "https://cold-chain-ml.onrender.com/predict";
 
 // =========================================================
-// ML REQUEST TIMEOUT
-//
-// ESP32 ko ML training ke liye wait nahi karwana.
+// ML SETTINGS
 // =========================================================
 
 const ML_TIMEOUT_MS = 5000;
 
-
-// =========================================================
-// LAST KNOWN ML RESULT
-//
-// Agar ML temporarily slow/down hai,
-// previous valid ML decision use hoga.
-// =========================================================
-
+// Latest successful ML prediction
 let lastMLPrediction = null;
 
+// Prevent multiple ML requests at the same time
+let mlPredictionRunning = false;
+
 
 // =========================================================
-// SAFETY CONTROL
+// SAFETY CONTROLLER
+//
+// Target temperature: 2°C - 12°C
+//
+// > 12°C  -> Level 2
+// < 2°C   -> Level 0
+// 2-12°C  -> ML decision
 // =========================================================
 
-function safetyCoolingLevel(insideTemp) {
-
-  // Above 12°C
-  // MUST COOL HARD
+function getSafetyCoolingLevel(insideTemp) {
 
   if (insideTemp > 12) {
     return 2;
   }
 
-
-  // Below 2°C
-  // TOO COLD
-
   if (insideTemp < 2) {
     return 0;
   }
 
+  return null;
+}
 
-  // Inside safe range
-  return 0;
+
+// =========================================================
+// BACKGROUND ML PREDICTION
+//
+// IMPORTANT:
+// This function DOES NOT block ESP32 request.
+// =========================================================
+
+async function runMLPrediction(
+  insideTemp,
+  outsideTemp,
+  history
+) {
+
+  if (mlPredictionRunning) {
+
+    console.log(
+      "[ML] Prediction already running. Skipping duplicate request."
+    );
+
+    return;
+
+  }
+
+  mlPredictionRunning = true;
+
+  try {
+
+    console.log(
+      "[ML] Starting background prediction..."
+    );
+
+
+    const controller =
+      new AbortController();
+
+
+    const timeout =
+      setTimeout(
+        () => controller.abort(),
+        ML_TIMEOUT_MS
+      );
+
+
+    const mlResponse =
+      await fetch(
+        ML_URL,
+        {
+          method: "POST",
+
+          headers: {
+            "Content-Type":
+              "application/json"
+          },
+
+          body: JSON.stringify({
+
+            inside_temperature:
+              insideTemp,
+
+            outside_temperature:
+              outsideTemp,
+
+            history
+
+          }),
+
+          signal:
+            controller.signal
+        }
+      );
+
+
+    clearTimeout(timeout);
+
+
+    if (!mlResponse.ok) {
+
+      throw new Error(
+        `ML API returned ${mlResponse.status}`
+      );
+
+    }
+
+
+    const prediction =
+      await mlResponse.json();
+
+
+    if (
+      prediction &&
+      typeof prediction === "object"
+    ) {
+
+      lastMLPrediction =
+        prediction;
+
+
+      console.log(
+        "[ML] Background prediction updated:",
+        {
+          cooling_level:
+            prediction.cooling_level,
+
+          trend:
+            prediction.trend,
+
+          future_points:
+            Array.isArray(
+              prediction.future_temperatures
+            )
+              ? prediction.future_temperatures.length
+              : 0
+        }
+      );
+
+    }
+
+  } catch (error) {
+
+    console.error(
+      "[ML] Background prediction failed:",
+      error.message
+    );
+
+  } finally {
+
+    mlPredictionRunning = false;
+
+  }
 }
 
 
@@ -81,26 +204,35 @@ router.post("/", async (req, res) => {
     ) {
 
       return res.status(400).json({
-        error: "Missing required sensor data"
+        error:
+          "Missing required sensor data"
       });
 
     }
 
 
     const insideTemp =
-      Number(inside_temperature);
+      Number(
+        inside_temperature
+      );
 
 
     const outsideTemp =
-      Number(outside_temperature);
+      Number(
+        outside_temperature
+      );
 
 
     const voltageValue =
-      Number(voltage);
+      Number(
+        voltage
+      );
 
 
     const powerPresent =
-      Boolean(power_present);
+      Boolean(
+        power_present
+      );
 
 
     if (
@@ -110,7 +242,8 @@ router.post("/", async (req, res) => {
     ) {
 
       return res.status(400).json({
-        error: "Invalid sensor values"
+        error:
+          "Invalid sensor values"
       });
 
     }
@@ -127,10 +260,10 @@ router.post("/", async (req, res) => {
 
 
     // =====================================================
-    // SAVE SENSOR READING
+    // SAVE SENSOR DATA FIRST
     // =====================================================
 
-    const coolingOnFromTemperature =
+    const initialCooling =
       insideTemp > 12;
 
 
@@ -163,7 +296,7 @@ router.post("/", async (req, res) => {
           insideTemp,
           outsideTemp,
           voltageValue,
-          coolingOnFromTemperature,
+          initialCooling,
           true
         ]
       );
@@ -176,221 +309,48 @@ router.post("/", async (req, res) => {
 
 
     // =====================================================
-    // GET HISTORY
-    //
-    // Keep complete history for existing training flow.
+    // SAFETY LEVEL
     // =====================================================
 
-    const historyResult =
-      await pool.query(
-        `
-        SELECT
-          id,
-          recorded_at AS timestamp,
-          temperature AS inside_temp,
-          outside_temperature AS outside_temp,
-          cooling_on
-        FROM sensor_readings
-        WHERE
-          temperature IS NOT NULL
-          AND outside_temperature IS NOT NULL
-        ORDER BY
-          recorded_at ASC,
-          id ASC
-        `
-      );
-
-
-    // =====================================================
-    // CREATE ML HISTORY
-    // =====================================================
-
-    const history =
-      historyResult.rows.map(
-        (row) => ({
-
-          timestamp:
-            row.timestamp,
-
-          inside_temp:
-            Number(
-              row.inside_temp
-            ),
-
-          outside_temp:
-            Number(
-              row.outside_temp
-            ),
-
-          mode:
-            Number(row.inside_temp) > 12
-              ? "PRE_COOLING"
-              : "ML_CONTROL",
-
-          cooling_level:
-            Number(row.cooling_on)
-              ? 1
-              : 0
-
-        })
-      );
-
-
-    // =====================================================
-    // IMMEDIATE SAFETY LEVEL
-    //
-    // This exists BEFORE ML response.
-    //
-    // So if ML is slow, we still have a valid level.
-    // =====================================================
-
-    const immediateSafetyLevel =
-      safetyCoolingLevel(
+    const safetyLevel =
+      getSafetyCoolingLevel(
         insideTemp
       );
 
 
     // =====================================================
-    // ML REQUEST WITH TIMEOUT
+    // CURRENT COOLING LEVEL
     // =====================================================
 
-    let prediction = null;
+    let coolingLevel;
 
 
-    try {
+    // -----------------------------------------------------
+    // HARD SAFETY
+    // -----------------------------------------------------
 
-      const controller =
-        new AbortController();
+    if (
+      safetyLevel !== null
+    ) {
 
-
-      const timeout =
-        setTimeout(
-          () => controller.abort(),
-          ML_TIMEOUT_MS
-        );
-
-
-      const mlResponse =
-        await fetch(
-          ML_URL,
-          {
-            method: "POST",
-
-            headers: {
-              "Content-Type":
-                "application/json"
-            },
-
-            body: JSON.stringify({
-
-              inside_temperature:
-                insideTemp,
-
-              outside_temperature:
-                outsideTemp,
-
-              history
-
-            }),
-
-            signal:
-              controller.signal
-
-          }
-        );
-
-
-      clearTimeout(timeout);
-
-
-      // ===================================================
-      // ML HTTP ERROR
-      // ===================================================
-
-      if (!mlResponse.ok) {
-
-        throw new Error(
-          `ML API returned ${mlResponse.status}`
-        );
-
-      }
-
-
-      prediction =
-        await mlResponse.json();
-
-
-      // ===================================================
-      // SAVE LAST VALID ML RESULT
-      // ===================================================
-
-      if (
-        prediction &&
-        typeof prediction === "object"
-      ) {
-
-        lastMLPrediction =
-          prediction;
-
-      }
-
-
-      console.log(
-        "[ML] Prediction received:",
-        prediction
-      );
-
-
-    } catch (mlError) {
-
-      console.error(
-        "[ML] Prediction timeout/unavailable:",
-        mlError.message
-      );
-
-
-      // ===================================================
-      // USE LAST ML RESULT
-      // ===================================================
-
-      if (lastMLPrediction) {
-
-        prediction =
-          lastMLPrediction;
-
-        console.log(
-          "[ML] Using last known prediction."
-        );
-
-      } else {
-
-        prediction = null;
-
-        console.log(
-          "[ML] No previous prediction. "
-          + "Using safety controller."
-        );
-
-      }
+      coolingLevel =
+        safetyLevel;
 
     }
 
 
-    // =====================================================
-    // DETERMINE COOLING LEVEL
-    // =====================================================
+    // -----------------------------------------------------
+    // SAFE RANGE: USE LAST ML RESULT
+    // -----------------------------------------------------
 
-    let coolingLevel = null;
-
-
-    if (
-      prediction &&
-      prediction.cooling_level != null
+    else if (
+      lastMLPrediction &&
+      lastMLPrediction.cooling_level != null
     ) {
 
       const mlLevel =
         Number(
-          prediction.cooling_level
+          lastMLPrediction.cooling_level
         );
 
 
@@ -403,74 +363,54 @@ router.post("/", async (req, res) => {
         coolingLevel =
           mlLevel;
 
+      } else {
+
+        coolingLevel =
+          0;
+
       }
 
     }
 
 
-    // =====================================================
-    // HARD SAFETY OVERRIDES
-    // =====================================================
-
     // -----------------------------------------------------
-    // ABOVE 12°C
-    //
-    // NEVER allow ML to turn cooling OFF.
+    // NO ML RESULT YET
     // -----------------------------------------------------
 
-    if (insideTemp > 12) {
+    else {
 
-      coolingLevel = 2;
-
-    }
-
-
-    // -----------------------------------------------------
-    // BELOW 2°C
-    //
-    // NEVER allow ML to keep Peltier ON.
-    // -----------------------------------------------------
-
-    else if (insideTemp < 2) {
-
-      coolingLevel = 0;
+      coolingLevel =
+        0;
 
     }
 
 
     // =====================================================
-    // NO ML DECISION
-    //
-    // Use immediate safety decision.
+    // FINAL SAFETY OVERRIDES
     // =====================================================
 
     if (
-      coolingLevel === null
+      insideTemp > 12
     ) {
 
       coolingLevel =
-        immediateSafetyLevel;
+        2;
 
     }
 
-
-    // =====================================================
-    // FINAL SAFETY VALIDATION
-    // =====================================================
 
     if (
-      ![0, 1, 2].includes(
-        coolingLevel
-      )
+      insideTemp < 2
     ) {
 
-      coolingLevel = 0;
+      coolingLevel =
+        0;
 
     }
 
 
     // =====================================================
-    // COOLING STATUS
+    // CURRENT STATUS
     // =====================================================
 
     const coolingOn =
@@ -483,28 +423,105 @@ router.post("/", async (req, res) => {
         : "OFF";
 
 
-    const peltier =
-      coolingOn
-        ? "ON"
-        : "OFF";
+    // =====================================================
+    // ML HISTORY
+    //
+    // Fetch history ONLY for background ML.
+    // It does NOT block ESP32 response.
+    // =====================================================
+
+    let history = [];
 
 
-    const fan =
-      coolingOn
-        ? "ON"
-        : "OFF";
+    try {
+
+      const historyResult =
+        await pool.query(
+          `
+          SELECT
+            id,
+            recorded_at AS timestamp,
+            temperature AS inside_temp,
+            outside_temperature AS outside_temp,
+            cooling_on
+          FROM sensor_readings
+          WHERE
+            temperature IS NOT NULL
+            AND outside_temperature IS NOT NULL
+          ORDER BY
+            recorded_at ASC,
+            id ASC
+          `
+        );
+
+
+      history =
+        historyResult.rows.map(
+          (row) => ({
+
+            timestamp:
+              row.timestamp,
+
+            inside_temp:
+              Number(
+                row.inside_temp
+              ),
+
+            outside_temp:
+              Number(
+                row.outside_temp
+              ),
+
+            mode:
+              Number(
+                row.inside_temp
+              ) > 12
+                ? "PRE_COOLING"
+                : "ML_CONTROL",
+
+            cooling_level:
+              Number(
+                row.cooling_on
+              )
+                ? 1
+                : 0
+
+          })
+        );
+
+    } catch (historyError) {
+
+      console.error(
+        "[ESP32] History query failed:",
+        historyError.message
+      );
+
+    }
 
 
     // =====================================================
-    // FUTURE TEMPERATURES
+    // START ML IN BACKGROUND
+    //
+    // DO NOT await this.
+    // =====================================================
+
+    runMLPrediction(
+      insideTemp,
+      outsideTemp,
+      history
+    );
+
+
+    // =====================================================
+    // GET LAST ML INFORMATION
     // =====================================================
 
     const futureTemperatures =
-      prediction &&
+      lastMLPrediction &&
       Array.isArray(
-        prediction.future_temperatures
+        lastMLPrediction.future_temperatures
       )
-        ? prediction.future_temperatures
+        ? lastMLPrediction.future_temperatures
             .map(Number)
             .filter(
               Number.isFinite
@@ -512,12 +529,8 @@ router.post("/", async (req, res) => {
         : [];
 
 
-    // =====================================================
-    // TREND
-    // =====================================================
-
     const trend =
-      prediction?.trend ||
+      lastMLPrediction?.trend ||
       "STABLE";
 
 
@@ -532,17 +545,20 @@ router.post("/", async (req, res) => {
       coolingLevel === 2
     ) {
 
-      risk = "high";
+      risk =
+        "high";
 
     } else if (
       coolingLevel === 1
     ) {
 
-      risk = "medium";
+      risk =
+        "medium";
 
     } else {
 
-      risk = "low";
+      risk =
+        "low";
 
     }
 
@@ -552,21 +568,21 @@ router.post("/", async (req, res) => {
     // =====================================================
 
     const predictionStatus =
-      prediction
+      lastMLPrediction
         ? "ACTIVE"
-        : "SAFETY_FALLBACK";
+        : "WAITING_FOR_ML";
 
 
     // =====================================================
-    // FINAL ESP32 RESPONSE
+    // IMMEDIATE ESP32 RESPONSE
     //
-    // IMPORTANT:
-    // cooling_level is ALWAYS present.
+    // ESP32 DOES NOT WAIT FOR ML.
     // =====================================================
 
     return res.json({
 
-      success: true,
+      success:
+        true,
 
       inside_temperature:
         insideTemp,
@@ -587,7 +603,7 @@ router.post("/", async (req, res) => {
         true,
 
       mode:
-        prediction?.mode ||
+        lastMLPrediction?.mode ||
         mode,
 
       prediction_status:
@@ -599,9 +615,15 @@ router.post("/", async (req, res) => {
       cooling_decision:
         coolingDecision,
 
-      peltier,
+      peltier:
+        coolingOn
+          ? "ON"
+          : "OFF",
 
-      fan,
+      fan:
+        coolingOn
+          ? "ON"
+          : "OFF",
 
       trend,
 
@@ -619,19 +641,16 @@ router.post("/", async (req, res) => {
 
     });
 
-
   } catch (error) {
 
     console.error(
-      "ESP32 API error:",
-      error
+      "[ESP32] API error:",
+      error.message
     );
 
 
     // =====================================================
-    // EVEN OUTER ERROR GETS SAFETY RESPONSE
-    //
-    // Don't leave ESP32 waiting unnecessarily.
+    // EMERGENCY RESPONSE
     // =====================================================
 
     const insideTemp =
@@ -640,19 +659,53 @@ router.post("/", async (req, res) => {
       );
 
 
-    const safeLevel =
+    let emergencyLevel =
+      0;
+
+
+    if (
       Number.isFinite(
         insideTemp
       )
-        ? safetyCoolingLevel(
-            insideTemp
+    ) {
+
+      if (
+        insideTemp > 12
+      ) {
+
+        emergencyLevel =
+          2;
+
+      } else if (
+        insideTemp < 2
+      ) {
+
+        emergencyLevel =
+          0;
+
+      } else if (
+        lastMLPrediction &&
+        [0, 1, 2].includes(
+          Number(
+            lastMLPrediction.cooling_level
           )
-        : 0;
+        )
+      ) {
+
+        emergencyLevel =
+          Number(
+            lastMLPrediction.cooling_level
+          );
+
+      }
+
+    }
 
 
     return res.json({
 
-      success: true,
+      success:
+        true,
 
       inside_temperature:
         Number.isFinite(
@@ -665,20 +718,20 @@ router.post("/", async (req, res) => {
         "SAFETY_FALLBACK",
 
       cooling_level:
-        safeLevel,
+        emergencyLevel,
 
       cooling_decision:
-        safeLevel > 0
+        emergencyLevel > 0
           ? "ON"
           : "OFF",
 
       peltier:
-        safeLevel > 0
+        emergencyLevel > 0
           ? "ON"
           : "OFF",
 
       fan:
-        safeLevel > 0
+        emergencyLevel > 0
           ? "ON"
           : "OFF",
 
@@ -686,7 +739,7 @@ router.post("/", async (req, res) => {
         "UNKNOWN",
 
       risk:
-        safeLevel === 2
+        emergencyLevel === 2
           ? "high"
           : "low"
 
