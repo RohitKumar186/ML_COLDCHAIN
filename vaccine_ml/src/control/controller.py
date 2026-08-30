@@ -31,7 +31,7 @@ TARGET_MAX = 12.0
 # Temperature at which a rising forecast is considered
 # to be approaching the upper target.
 
-WATCH_TEMP = 10.0
+WATCH_TEMP = 11.0
 
 # Temperature difference considered meaningful.
 
