@@ -7,10 +7,8 @@ const ML_URL =
   "https://cold-chain-ml.onrender.com/predict";
 
 // =========================================================
-// ML SETTINGS
+// ML STATE
 // =========================================================
-
-const ML_TIMEOUT_MS = 5000;
 
 // Latest successful ML prediction
 let lastMLPrediction = null;
@@ -63,7 +61,6 @@ async function runMLPrediction(
     );
 
     return;
-
   }
 
   mlPredictionRunning = true;
@@ -73,17 +70,6 @@ async function runMLPrediction(
     console.log(
       "[ML] Starting background prediction..."
     );
-
-
-    const controller =
-      new AbortController();
-
-
-    const timeout =
-      setTimeout(
-        () => controller.abort(),
-        ML_TIMEOUT_MS
-      );
 
 
     const mlResponse =
@@ -107,15 +93,9 @@ async function runMLPrediction(
 
             history
 
-          }),
-
-          signal:
-            controller.signal
+          })
         }
       );
-
-
-    clearTimeout(timeout);
 
 
     if (!mlResponse.ok) {
@@ -123,7 +103,6 @@ async function runMLPrediction(
       throw new Error(
         `ML API returned ${mlResponse.status}`
       );
-
     }
 
 
@@ -157,7 +136,6 @@ async function runMLPrediction(
               : 0
         }
       );
-
     }
 
   } catch (error) {
@@ -426,8 +404,8 @@ router.post("/", async (req, res) => {
     // =====================================================
     // ML HISTORY
     //
-    // Fetch history ONLY for background ML.
-    // It does NOT block ESP32 response.
+    // Fetch history for background ML.
+    // ESP32 response does NOT wait for ML.
     // =====================================================
 
     let history = [];
