@@ -6,26 +6,33 @@ const router = Router();
 const ML_URL =
   "https://cold-chain-ml.onrender.com/predict";
 
+// =========================================================
+// ML TIMEOUT
+// =========================================================
 
-/*
-  =========================================================
-  GET /api/prediction
+const ML_TIMEOUT_MS = 5000;
 
-  ESP32
-      ↓
-  PostgreSQL
-      ↓
-  Recent history
-      ↓
-  Node.js
-      ↓
-  Flask ML
-      ↓
-  Future temperature prediction
-      ↓
-  Frontend
-  =========================================================
-*/
+
+// =========================================================
+// GET /api/prediction
+//
+// PostgreSQL
+//     ↓
+// Recent sensor history
+//     ↓
+// Node.js
+//     ↓
+// Flask ML
+//     ↓
+// Future temperature prediction
+//     ↓
+// Frontend
+//
+// IMPORTANT:
+// ML request has a 5-second timeout.
+// If ML is unavailable, a safe fallback response
+// is returned instead of keeping the request pending.
+// =========================================================
 
 router.get("/", async (req, res) => {
 
@@ -65,8 +72,7 @@ router.get("/", async (req, res) => {
     // =====================================================
     // REVERSE HISTORY
     //
-    // ML features need chronological order:
-    // oldest → newest
+    // Oldest → Newest
     // =====================================================
 
     const rows =
@@ -159,6 +165,14 @@ router.get("/", async (req, res) => {
 
         futureTemperatures: [],
 
+        future_temperatures: [],
+
+        projected_min: null,
+
+        projected_max: null,
+
+        future_points: 0,
+
         trend: "UNKNOWN",
 
         mode: "DEVICE_OFFLINE",
@@ -177,12 +191,6 @@ router.get("/", async (req, res) => {
 
     // =====================================================
     // PREPARE HISTORY FOR FLASK
-    //
-    // Flask expects:
-    // timestamp
-    // inside_temp
-    // outside_temp
-    // mode
     // =====================================================
 
     const history =
@@ -223,61 +231,223 @@ router.get("/", async (req, res) => {
 
     // =====================================================
     // CALL FLASK ML BACKEND
+    //
+    // IMPORTANT:
+    // Maximum 5 seconds wait.
     // =====================================================
 
-    const response = await fetch(
-      ML_URL,
-      {
-        method: "POST",
+    let mlData = null;
 
-        headers: {
-          "Content-Type":
-            "application/json",
-        },
+    try {
 
-        body: JSON.stringify({
+      const controller =
+        new AbortController();
 
-          inside_temperature:
-            insideTemp,
 
-          outside_temperature:
-            outsideTemp,
+      const timeout =
+        setTimeout(
+          () => {
+            controller.abort();
+          },
+          ML_TIMEOUT_MS
+        );
 
-          // IMPORTANT:
-          // Send history to ML
-          history,
 
-        }),
+      const response =
+        await fetch(
+          ML_URL,
+          {
+            method: "POST",
+
+            headers: {
+              "Content-Type":
+                "application/json",
+            },
+
+            body: JSON.stringify({
+
+              inside_temperature:
+                insideTemp,
+
+              outside_temperature:
+                outsideTemp,
+
+              history,
+
+            }),
+
+            signal:
+              controller.signal,
+
+          }
+        );
+
+
+      clearTimeout(timeout);
+
+
+      // ===================================================
+      // ML HTTP ERROR
+      // ===================================================
+
+      if (!response.ok) {
+
+        throw new Error(
+          `ML backend returned HTTP ${response.status}`
+        );
 
       }
-    );
 
 
-    // =====================================================
-    // CHECK ML RESPONSE
-    // =====================================================
+      mlData =
+        await response.json();
 
-    if (!response.ok) {
 
-      throw new Error(
-        `ML backend returned HTTP ${response.status}`
+      console.log(
+        "[ML] Prediction:",
+        mlData
       );
+
+
+    } catch (mlError) {
+
+      console.error(
+        "[ML] Prediction unavailable:",
+        mlError.message
+      );
+
+      mlData = null;
 
     }
 
 
-    const mlData =
-      await response.json();
+    // =====================================================
+    // FALLBACK WHEN ML IS UNAVAILABLE
+    //
+    // This prevents the frontend from getting HTTP 500.
+    //
+    // Safety logic:
+    //
+    // > 12°C → Level 2 → 100%
+    // 2-12°C → Level 1 → 50%
+    // < 2°C  → Level 0 → OFF
+    // =====================================================
+
+    if (!mlData) {
+
+      let fallbackLevel;
+
+      if (insideTemp > 12) {
+
+        fallbackLevel = 2;
+
+      } else if (insideTemp < 2) {
+
+        fallbackLevel = 0;
+
+      } else {
+
+        fallbackLevel = 1;
+
+      }
 
 
-    console.log(
-      "[ML] Prediction:",
-      mlData
-    );
+      const fallbackCooling =
+        fallbackLevel > 0;
+
+
+      const fallbackRisk =
+        fallbackLevel === 2
+          ? "high"
+          : fallbackLevel === 1
+          ? "medium"
+          : "low";
+
+
+      return res.json({
+
+        current:
+          insideTemp,
+
+        temperature:
+          insideTemp,
+
+        data: [
+          {
+            x: "Now",
+
+            temp:
+              insideTemp,
+
+            forecast:
+              insideTemp,
+          },
+        ],
+
+        min:
+          Number(
+            insideTemp.toFixed(1)
+          ),
+
+        max:
+          Number(
+            insideTemp.toFixed(1)
+          ),
+
+        risk:
+          fallbackRisk,
+
+        coolingDecision:
+          fallbackCooling
+            ? "ON"
+            : "OFF",
+
+        coolingLevel:
+          fallbackLevel,
+
+        peltier:
+          fallbackCooling,
+
+        futureTemperatures: [],
+
+        future_temperatures: [],
+
+        projected_min:
+          null,
+
+        projected_max:
+          null,
+
+        future_points:
+          0,
+
+        trend:
+          "WAITING",
+
+        mode:
+          insideTemp > 12
+            ? "PRE_COOLING"
+            : "ML_CONTROL",
+
+        outsideTemperature:
+          outsideTemp,
+
+        deviceConnected:
+          true,
+
+        timestamp:
+          latest.recorded_at,
+
+        prediction_status:
+          "ML_TEMPORARILY_UNAVAILABLE",
+
+      });
+
+    }
 
 
     // =====================================================
-    // COOLING LEVEL
+    // COOLING LEVEL FROM ML
     // =====================================================
 
     const coolingLevel =
@@ -295,19 +465,53 @@ router.get("/", async (req, res) => {
 
 
     // =====================================================
+    // SAFETY OVERRIDE
+    //
+    // These rules always take priority.
+    // =====================================================
+
+    let finalCoolingLevel =
+      safeCoolingLevel;
+
+
+    // Current > 12°C
+    // → Level 2
+
+    if (insideTemp > 12) {
+
+      finalCoolingLevel = 2;
+
+    }
+
+
+    // Current < 2°C
+    // → Level 0
+
+    else if (insideTemp < 2) {
+
+      finalCoolingLevel = 0;
+
+    }
+
+
+    // 2°C - 12°C
+    // → ML decision remains active.
+
+
+    // =====================================================
     // RISK
     // =====================================================
 
     let risk;
 
     if (
-      safeCoolingLevel === 0
+      finalCoolingLevel === 0
     ) {
 
       risk = "low";
 
     } else if (
-      safeCoolingLevel === 1
+      finalCoolingLevel === 1
     ) {
 
       risk = "medium";
@@ -324,7 +528,7 @@ router.get("/", async (req, res) => {
     // =====================================================
 
     const coolingDecision =
-      safeCoolingLevel > 0
+      finalCoolingLevel > 0
         ? "ON"
         : "OFF";
 
@@ -334,7 +538,7 @@ router.get("/", async (req, res) => {
     // =====================================================
 
     const peltier =
-      safeCoolingLevel > 0;
+      finalCoolingLevel > 0;
 
 
     // =====================================================
@@ -392,8 +596,6 @@ router.get("/", async (req, res) => {
 
     // =====================================================
     // GRAPH DATA
-    //
-    // Current → Future ML predictions
     // =====================================================
 
     const data = [];
@@ -403,9 +605,11 @@ router.get("/", async (req, res) => {
 
       x: "Now",
 
-      temp: current,
+      temp:
+        current,
 
-      forecast: current,
+      forecast:
+        current,
 
     });
 
@@ -421,7 +625,8 @@ router.get("/", async (req, res) => {
           x:
             `+${(index + 1) * 5}m`,
 
-          temp: null,
+          temp:
+            null,
 
           forecast:
             temperature,
@@ -447,7 +652,11 @@ router.get("/", async (req, res) => {
 
     const mode =
       mlData.mode ||
-      "ML_CONTROL";
+      (
+        insideTemp > 12
+          ? "PRE_COOLING"
+          : "ML_CONTROL"
+      );
 
 
     // =====================================================
@@ -478,14 +687,11 @@ router.get("/", async (req, res) => {
       coolingDecision,
 
       coolingLevel:
-        safeCoolingLevel,
+        finalCoolingLevel,
 
       peltier,
 
       futureTemperatures,
-
-      // Also provide snake_case
-      // for direct ML/frontend compatibility.
 
       future_temperatures:
         futureTemperatures,
@@ -524,6 +730,9 @@ router.get("/", async (req, res) => {
       timestamp:
         latest.recorded_at,
 
+      prediction_status:
+        "ACTIVE",
+
     });
 
 
@@ -533,6 +742,19 @@ router.get("/", async (req, res) => {
       "GET /api/prediction error:",
       error
     );
+
+
+    // =====================================================
+    // FINAL EMERGENCY FALLBACK
+    //
+    // Even if database/API processing fails,
+    // don't leave frontend hanging.
+    // =====================================================
+
+    const insideTemp =
+      Number(
+        req.body?.inside_temperature
+      );
 
 
     return res.status(500).json({
