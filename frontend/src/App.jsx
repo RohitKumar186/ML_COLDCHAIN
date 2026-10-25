@@ -27,6 +27,10 @@ import Prediction from "./pages/Prediction";
 import Inventory from "./pages/Inventory";
 import { getVaccines } from "./api";
 
+// Enable this only for a software demonstration.
+// Do not use unverified demo profiles for real vaccine storage.
+const DEMO_MODE = import.meta.env.VITE_DEMO_MODE === "true";
+
 const nav = [
   {
     path: "/monitoring",
@@ -47,10 +51,6 @@ const nav = [
 
 const STORAGE_KEY = "coldChainSelectedVaccine";
 
-// =========================================================
-// READ SAVED VACCINE
-// =========================================================
-
 function readSavedVaccine() {
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
@@ -60,11 +60,7 @@ function readSavedVaccine() {
   }
 }
 
-// =========================================================
-// VERIFY VACCINE TEMPERATURE CONFIGURATION
-// =========================================================
-
-function hasVerifiedTemperatureConfiguration(vaccine) {
+function hasValidTemperatureRange(vaccine) {
   if (!vaccine) return false;
 
   const min = Number(vaccine.minStorageTemp);
@@ -72,8 +68,6 @@ function hasVerifiedTemperatureConfiguration(vaccine) {
   const unit = vaccine.temperatureUnit || "C";
 
   return (
-    vaccine.configurationVerified === true &&
-    vaccine.temperatureConfigurationValid !== false &&
     vaccine.minStorageTemp != null &&
     vaccine.maxStorageTemp != null &&
     Number.isFinite(min) &&
@@ -83,12 +77,31 @@ function hasVerifiedTemperatureConfiguration(vaccine) {
   );
 }
 
-// =========================================================
-// TEMPERATURE LABEL
-// =========================================================
+function hasVerifiedTemperatureConfiguration(vaccine) {
+  return (
+    hasValidTemperatureRange(vaccine) &&
+    vaccine.configurationVerified === true &&
+    vaccine.temperatureConfigurationValid !== false
+  );
+}
+
+// Demo mode permits selection for UI demonstration only.
+// It does not mark a database record as verified.
+function canSelectVaccine(vaccine) {
+  if (hasVerifiedTemperatureConfiguration(vaccine)) {
+    return true;
+  }
+
+  return DEMO_MODE && hasValidTemperatureRange(vaccine);
+}
 
 function getTemperatureLabel(vaccine) {
   if (!hasVerifiedTemperatureConfiguration(vaccine)) {
+    if (DEMO_MODE && hasValidTemperatureRange(vaccine)) {
+      const unit = vaccine.temperatureUnit || "C";
+      return `DEMO ONLY: ${vaccine.minStorageTemp}°${unit} to ${vaccine.maxStorageTemp}°${unit}`;
+    }
+
     return "Storage limits not verified";
   }
 
@@ -96,10 +109,6 @@ function getTemperatureLabel(vaccine) {
 
   return `${vaccine.minStorageTemp}°${unit} to ${vaccine.maxStorageTemp}°${unit}`;
 }
-
-// =========================================================
-// VACCINE SELECTION MODAL
-// =========================================================
 
 function VaccineSelectionModal({
   open,
@@ -109,19 +118,13 @@ function VaccineSelectionModal({
   required,
 }) {
   const [vaccines, setVaccines] = useState([]);
-
   const [selectedId, setSelectedId] = useState(
     currentVaccine?.id != null
       ? String(currentVaccine.id)
       : ""
   );
-
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-
-  // -------------------------------------------------------
-  // LOAD VACCINES FROM DATABASE
-  // -------------------------------------------------------
 
   async function loadVaccines() {
     setLoading(true);
@@ -147,27 +150,17 @@ function VaccineSelectionModal({
         setSelectedId("");
       }
     } catch (err) {
-      setError(
-        err.message || "Unable to load vaccines."
-      );
+      setError(err.message || "Unable to load vaccines.");
     } finally {
       setLoading(false);
     }
   }
-
-  // -------------------------------------------------------
-  // LOAD WHEN MODAL OPENS
-  // -------------------------------------------------------
 
   useEffect(() => {
     if (open) {
       loadVaccines();
     }
   }, [open]);
-
-  // -------------------------------------------------------
-  // UPDATE SELECTED VACCINE
-  // -------------------------------------------------------
 
   useEffect(() => {
     if (open) {
@@ -184,14 +177,12 @@ function VaccineSelectionModal({
       String(vaccine.id) === String(selectedId)
   );
 
-  const validConfiguration =
-    hasVerifiedTemperatureConfiguration(
-      selectedVaccine
-    );
+  const verifiedConfiguration =
+    hasVerifiedTemperatureConfiguration(selectedVaccine);
 
-  if (!open) {
-    return null;
-  }
+  const canConfirm = canSelectVaccine(selectedVaccine);
+
+  if (!open) return null;
 
   return (
     <div style={styles.overlay}>
@@ -222,34 +213,35 @@ function VaccineSelectionModal({
           VACCINE CONFIGURATION
         </p>
 
-        <h2
-          id="vaccine-modal-title"
-          style={styles.title}
-        >
+        <h2 id="vaccine-modal-title" style={styles.title}>
           Select your vaccine
         </h2>
 
         <p style={styles.description}>
-          Choose the vaccine stored in this monitored
-          unit. Temperature limits will be taken from
-          the database configuration.
+          Choose a product profile from the database.
+          Verified storage limits are required for real
+          vaccine monitoring.
         </p>
+
+        {DEMO_MODE && (
+          <div style={styles.demoBanner} role="status">
+            <strong>DEMO MODE ENABLED</strong>
+            <p>
+              Demo profiles are for software demonstration
+              only. Their temperature limits are not verified
+              for real vaccine storage.
+            </p>
+          </div>
+        )}
 
         {loading ? (
           <div style={styles.message}>
             <RefreshCw size={18} />
-
             Loading vaccines from database...
           </div>
         ) : error ? (
-          <div
-            role="alert"
-            style={styles.error}
-          >
-            <strong>
-              Unable to load vaccines
-            </strong>
-
+          <div role="alert" style={styles.error}>
+            <strong>Unable to load vaccines</strong>
             <p>{error}</p>
 
             <button
@@ -264,8 +256,7 @@ function VaccineSelectionModal({
         ) : vaccines.length === 0 ? (
           <div style={styles.message}>
             No active vaccine records were found.
-            Configure verified vaccine records in
-            PostgreSQL before continuing.
+            Add vaccine records to PostgreSQL first.
           </div>
         ) : (
           <>
@@ -294,8 +285,8 @@ function VaccineSelectionModal({
                     key={vaccine.id}
                     value={String(vaccine.id)}
                   >
-                    {vaccine.name}
-                    {` — ${getTemperatureLabel(vaccine)}`}
+                    {vaccine.name} —{" "}
+                    {getTemperatureLabel(vaccine)}
                   </option>
                 ))}
               </select>
@@ -313,9 +304,7 @@ function VaccineSelectionModal({
                   Storage configuration
                 </div>
 
-                <strong>
-                  {selectedVaccine.name}
-                </strong>
+                <strong>{selectedVaccine.name}</strong>
 
                 <p style={styles.range}>
                   {getTemperatureLabel(selectedVaccine)}
@@ -323,8 +312,7 @@ function VaccineSelectionModal({
 
                 {selectedVaccine.productIdentifier && (
                   <p style={styles.smallText}>
-                    Product:{" "}
-                    {selectedVaccine.productIdentifier}
+                    Product: {selectedVaccine.productIdentifier}
                   </p>
                 )}
 
@@ -334,14 +322,13 @@ function VaccineSelectionModal({
                   </p>
                 )}
 
-                {!validConfiguration && (
-                  <p
-                    role="alert"
-                    style={styles.warning}
-                  >
-                    This vaccine does not have a verified
-                    temperature configuration. Select a
-                    verified record before continuing.
+                {!verifiedConfiguration && (
+                  <p role="alert" style={styles.warning}>
+                    This record is not verified for real vaccine
+                    storage.
+                    {DEMO_MODE
+                      ? " You may select it for the software demo only."
+                      : " Select a verified record before continuing."}
                   </p>
                 )}
               </div>
@@ -362,24 +349,18 @@ function VaccineSelectionModal({
 
           <button
             type="button"
-            disabled={
-              !validConfiguration ||
-              loading ||
-              Boolean(error)
-            }
+            disabled={!canConfirm || loading || Boolean(error)}
             onClick={() => {
-              if (validConfiguration) {
+              if (canConfirm) {
                 onConfirm(selectedVaccine);
               }
             }}
             style={{
               ...styles.primaryButton,
               opacity:
-                !validConfiguration || loading || error
-                  ? 0.5
-                  : 1,
+                !canConfirm || loading || error ? 0.5 : 1,
               cursor:
-                !validConfiguration || loading || error
+                !canConfirm || loading || error
                   ? "not-allowed"
                   : "pointer",
             }}
@@ -392,10 +373,6 @@ function VaccineSelectionModal({
   );
 }
 
-// =========================================================
-// MAIN APPLICATION
-// =========================================================
-
 export default function App() {
   const [selectedVaccine, setSelectedVaccine] =
     useState(readSavedVaccine);
@@ -406,10 +383,6 @@ export default function App() {
 
   const [checkingVaccine, setCheckingVaccine] =
     useState(() => Boolean(readSavedVaccine()));
-
-  // -------------------------------------------------------
-  // REVALIDATE SAVED VACCINE ON APP STARTUP
-  // -------------------------------------------------------
 
   useEffect(() => {
     let cancelled = false;
@@ -432,24 +405,15 @@ export default function App() {
         if (cancelled) return;
 
         if (!Array.isArray(vaccines)) {
-          throw new Error(
-            "Unexpected vaccine API response."
-          );
+          throw new Error("Unexpected vaccine API response.");
         }
 
         const currentVaccine = vaccines.find(
           (vaccine) =>
-            String(vaccine.id) ===
-            String(savedVaccine.id)
+            String(vaccine.id) === String(savedVaccine.id)
         );
 
-        if (
-          hasVerifiedTemperatureConfiguration(
-            currentVaccine
-          )
-        ) {
-          // Use the latest database record,
-          // not the previously cached object.
+        if (canSelectVaccine(currentVaccine)) {
           setSelectedVaccine(currentVaccine);
 
           try {
@@ -463,7 +427,6 @@ export default function App() {
 
           setModalOpen(false);
         } else {
-          // Record is missing or its limits are unverified.
           setSelectedVaccine(null);
 
           try {
@@ -477,13 +440,8 @@ export default function App() {
       } catch (err) {
         if (cancelled) return;
 
-        console.error(
-          "Unable to verify saved vaccine:",
-          err
-        );
+        console.error("Unable to verify saved vaccine:", err);
 
-        // Do not use stale saved limits if the database
-        // cannot confirm the selected vaccine.
         setSelectedVaccine(null);
 
         try {
@@ -507,14 +465,8 @@ export default function App() {
     };
   }, []);
 
-  // -------------------------------------------------------
-  // CONFIRM VACCINE
-  // -------------------------------------------------------
-
   function handleVaccineConfirm(vaccine) {
-    if (!hasVerifiedTemperatureConfiguration(vaccine)) {
-      return;
-    }
+    if (!canSelectVaccine(vaccine)) return;
 
     try {
       localStorage.setItem(
@@ -522,62 +474,45 @@ export default function App() {
         JSON.stringify(vaccine)
       );
     } catch {
-      // Do not block current-session use if storage fails.
+      // Continue with current-session state.
     }
 
     setSelectedVaccine(vaccine);
     setModalOpen(false);
   }
 
-  // -------------------------------------------------------
-  // CHANGE VACCINE
-  // -------------------------------------------------------
-
   function handleChangeVaccine() {
     setModalOpen(true);
   }
-
-  // -------------------------------------------------------
-  // RENDER APPLICATION
-  // -------------------------------------------------------
 
   return (
     <BrowserRouter>
       <div className="app-shell">
         <header className="topbar">
-          <NavLink
-            to="/"
-            className="brand"
-          >
+          <NavLink to="/" className="brand">
             <span className="brand-mark">
               <Snowflake size={19} />
             </span>
 
             <span>
               <b>ColdChain</b>
-              <small>
-                Vaccine Monitoring System
-              </small>
+              <small>Vaccine Monitoring System</small>
             </span>
           </NavLink>
 
           <nav className="topnav">
-            {nav.map(
-              ({ path, label, icon: Icon }) => (
-                <NavLink
-                  key={path}
-                  to={path}
-                  className={({ isActive }) =>
-                    isActive
-                      ? "nav-link active"
-                      : "nav-link"
-                  }
-                >
-                  <Icon size={15} />
-                  <span>{label}</span>
-                </NavLink>
-              )
-            )}
+            {nav.map(({ path, label, icon: Icon }) => (
+              <NavLink
+                key={path}
+                to={path}
+                className={({ isActive }) =>
+                  isActive ? "nav-link active" : "nav-link"
+                }
+              >
+                <Icon size={15} />
+                <span>{label}</span>
+              </NavLink>
+            ))}
           </nav>
 
           <button
@@ -587,15 +522,19 @@ export default function App() {
             title="Change selected vaccine"
           >
             <span style={styles.onlineDot} />
-
             <span>
-              {selectedVaccine?.name ||
-                "Select vaccine"}
+              {selectedVaccine?.name || "Select vaccine"}
             </span>
-
             <ChevronDown size={14} />
           </button>
         </header>
+
+        {DEMO_MODE && (
+          <div style={styles.demoTopBanner} role="status">
+            DEMO MODE — simulated/demo profiles only;
+            not approved for real vaccine storage decisions.
+          </div>
+        )}
 
         <main className="page-container">
           {checkingVaccine ? (
@@ -614,7 +553,6 @@ export default function App() {
                   margin: "0 auto 12px",
                 }}
               />
-
               Verifying vaccine configuration...
             </div>
           ) : (
@@ -632,36 +570,27 @@ export default function App() {
               <Route
                 path="/monitoring"
                 element={
-                  <Monitoring
-                    selectedVaccine={selectedVaccine}
-                  />
+                  <Monitoring selectedVaccine={selectedVaccine} />
                 }
               />
 
               <Route
                 path="/prediction"
                 element={
-                  <Prediction
-                    selectedVaccine={selectedVaccine}
-                  />
+                  <Prediction selectedVaccine={selectedVaccine} />
                 }
               />
 
               <Route
-  path="/inventory"
-  element={
-    <Inventory selectedVaccine={selectedVaccine} />
-  }
-/>
+                path="/inventory"
+                element={
+                  <Inventory selectedVaccine={selectedVaccine} />
+                }
+              />
 
               <Route
                 path="*"
-                element={
-                  <Navigate
-                    to="/"
-                    replace
-                  />
-                }
+                element={<Navigate to="/" replace />}
               />
             </Routes>
           )}
@@ -678,10 +607,6 @@ export default function App() {
     </BrowserRouter>
   );
 }
-
-// =========================================================
-// MODAL STYLES
-// =========================================================
 
 const styles = {
   overlay: {
@@ -818,6 +743,26 @@ const styles = {
     color: "#a34b00",
     fontSize: 12,
     lineHeight: 1.5,
+  },
+
+  demoBanner: {
+    marginBottom: 18,
+    padding: 12,
+    border: "1px solid #e7b45b",
+    borderRadius: 10,
+    background: "#fff8e8",
+    color: "#754b00",
+    fontSize: 12,
+    lineHeight: 1.5,
+  },
+
+  demoTopBanner: {
+    padding: "10px 16px",
+    background: "#fff0cc",
+    color: "#754b00",
+    textAlign: "center",
+    fontSize: 12,
+    fontWeight: 700,
   },
 
   message: {
