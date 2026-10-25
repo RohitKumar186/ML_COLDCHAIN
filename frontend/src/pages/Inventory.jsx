@@ -1,3 +1,4 @@
+
 import React, { useEffect, useMemo, useState } from "react";
 import {
   Plus,
@@ -8,14 +9,17 @@ import {
   ArrowUpFromLine,
   AlertTriangle,
 } from "lucide-react";
+
 import "../css/inventory.css";
 import { getInventory, addInventoryLog } from "../api";
 
-export default function Inventory() {
+export default function Inventory({ selectedVaccine }) {
   const [logs, setLogs] = useState([]);
   const [open, setOpen] = useState(false);
 
-  const [name, setName] = useState("");
+  const [name, setName] = useState(
+    selectedVaccine?.name || ""
+  );
   const [qty, setQty] = useState("");
   const [type, setType] = useState("in");
 
@@ -23,6 +27,18 @@ export default function Inventory() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [backendError, setBackendError] = useState("");
+
+  const selectedVaccineName =
+    selectedVaccine?.name?.trim() || "";
+
+  /* =====================================================
+     KEEP FORM SYNCHRONIZED WITH SELECTED VACCINE
+  ===================================================== */
+
+  useEffect(() => {
+    setName(selectedVaccineName);
+    setError("");
+  }, [selectedVaccineName]);
 
   /* =====================================================
      FETCH INVENTORY
@@ -42,52 +58,69 @@ export default function Inventory() {
         ? data.logs
         : [];
 
-      setLogs(
-        records.map((item, index) => ({
-          id:
-            item.id ??
-            item._id ??
-            `${Date.now()}-${index}`,
-
-          vaccine:
-            item.vaccine ??
-            item.vaccineType ??
-            item.name ??
-            "Unknown vaccine",
-
-          type:
+      const normalizedRecords = records.map(
+        (item, index) => {
+          const rawType = String(
             item.type ??
-            item.transactionType ??
-            "out",
+              item.transactionType ??
+              "out"
+          )
+            .trim()
+            .toLowerCase()
+            .replace(/[\s-]+/g, "_");
 
-          qty: Number(
-            item.qty ??
-              item.quantity ??
-              item.quantityUsed ??
-              0
-          ),
+          return {
+            id:
+              item.id ??
+              item._id ??
+              `${index}-${item.createdAt ?? item.timestamp ?? ""}`,
 
-          time:
-            item.time ??
-            item.dateTime ??
-            item.timestamp ??
-            item.createdAt ??
-            "—",
+            vaccine:
+              item.vaccine ??
+              item.vaccineType ??
+              item.name ??
+              "Unknown vaccine",
 
-          device:
-            item.device ??
-            item.deviceId ??
-            item.refrigerator ??
-            "—",
-        }))
+            type: [
+              "in",
+              "stock_in",
+              "addition",
+              "add",
+            ].includes(rawType)
+              ? "in"
+              : "out",
+
+            qty: Number(
+              item.qty ??
+                item.quantity ??
+                item.quantityUsed ??
+                0
+            ),
+
+            time:
+              item.time ??
+              item.dateTime ??
+              item.timestamp ??
+              item.createdAt ??
+              "—",
+
+            device:
+              item.device ??
+              item.deviceId ??
+              item.refrigerator ??
+              "—",
+          };
+        }
       );
 
+      setLogs(normalizedRecords);
       setBackendError("");
     } catch (err) {
       console.error("Inventory API error:", err);
 
       setBackendError(
-        "Unable to connect to inventory backend."
+        err?.message ||
+          "Unable to load inventory from the backend."
       );
     } finally {
       setLoading(false);
@@ -103,26 +136,45 @@ export default function Inventory() {
   }, []);
 
   /* =====================================================
+     FILTER INVENTORY FOR SELECTED VACCINE
+  ===================================================== */
+
+  const visibleLogs = useMemo(() => {
+    if (!selectedVaccineName) {
+      return logs;
+    }
+
+    return logs.filter(
+      (item) =>
+        String(item.vaccine).trim().toLowerCase() ===
+        selectedVaccineName.toLowerCase()
+    );
+  }, [logs, selectedVaccineName]);
+
+  /* =====================================================
      CURRENT STOCK
+     Case-insensitive vaccine names
   ===================================================== */
 
   const stockMap = useMemo(() => {
-    return logs.reduce((result, item) => {
-      const vaccine = item.vaccine;
+    return visibleLogs.reduce((result, item) => {
+      const vaccineKey = String(item.vaccine)
+        .trim()
+        .toLowerCase();
 
-      if (!result[vaccine]) {
-        result[vaccine] = 0;
+      if (result[vaccineKey] === undefined) {
+        result[vaccineKey] = 0;
       }
 
       if (item.type === "in") {
-        result[vaccine] += Number(item.qty) || 0;
+        result[vaccineKey] += Number(item.qty) || 0;
       } else {
-        result[vaccine] -= Number(item.qty) || 0;
+        result[vaccineKey] -= Number(item.qty) || 0;
       }
 
       return result;
     }, {});
-  }, [logs]);
+  }, [visibleLogs]);
 
   /* =====================================================
      TOTAL CURRENT STOCK
@@ -130,7 +182,8 @@ export default function Inventory() {
 
   const totalStock = useMemo(() => {
     return Object.values(stockMap).reduce(
-      (sum, value) => sum + Math.max(value, 0),
+      (sum, value) =>
+        sum + Math.max(Number(value) || 0, 0),
       0
     );
   }, [stockMap]);
@@ -140,54 +193,74 @@ export default function Inventory() {
   ===================================================== */
 
   const totalStockIn = useMemo(() => {
-    return logs
+    return visibleLogs
       .filter((item) => item.type === "in")
       .reduce(
         (sum, item) =>
           sum + (Number(item.qty) || 0),
         0
       );
-  }, [logs]);
+  }, [visibleLogs]);
 
   /* =====================================================
      TOTAL STOCK OUT
   ===================================================== */
 
   const totalStockOut = useMemo(() => {
-    return logs
+    return visibleLogs
       .filter((item) => item.type === "out")
       .reduce(
         (sum, item) =>
           sum + (Number(item.qty) || 0),
         0
       );
-  }, [logs]);
+  }, [visibleLogs]);
 
   /* =====================================================
      ADD INVENTORY
-     Date/time is automatically generated by the backend
   ===================================================== */
 
   const add = async () => {
     setError("");
 
-    if (!name.trim() || !qty || Number(qty) <= 0) {
+    const vaccineName = (
+      selectedVaccineName || name
+    ).trim();
+
+    if (!vaccineName) {
+      setError("Please select or enter a vaccine type.");
+      return;
+    }
+
+    if (
+      qty.trim() === "" ||
+      !Number.isFinite(Number(qty)) ||
+      Number(qty) <= 0
+    ) {
       setError(
-        "Please enter a vaccine type and valid quantity."
+        "Please enter a valid quantity greater than zero."
       );
       return;
     }
 
     const quantity = Number(qty);
-    const vaccineName = name.trim();
 
-    /* -----------------------------------------------
-       CHECK AVAILABLE STOCK FOR STOCK OUT
-    ------------------------------------------------ */
+    if (!Number.isSafeInteger(quantity)) {
+      setError("Quantity must be a whole number.");
+      return;
+    }
+
+    /* CHECK AVAILABLE STOCK */
 
     if (type === "out") {
-      const availableStock =
-        stockMap[vaccineName] || 0;
+      const vaccineKey = vaccineName
+        .trim()
+        .toLowerCase();
+
+      const availableStock = Math.max(
+        Number(stockMap[vaccineKey]) || 0,
+        0
+      );
 
       if (quantity > availableStock) {
         setError(
@@ -200,13 +273,6 @@ export default function Inventory() {
     try {
       setSaving(true);
 
-      /*
-       * No date/time is sent from the frontend.
-       *
-       * The backend/database automatically sets:
-       * CURRENT_TIMESTAMP
-       */
-
       const payload = {
         vaccine: vaccineName,
         type,
@@ -214,19 +280,15 @@ export default function Inventory() {
       };
 
       await addInventoryLog(payload);
-
       await loadInventory();
 
-      setName("");
+      setName(selectedVaccineName);
       setQty("");
       setType("in");
       setOpen(false);
       setError("");
     } catch (err) {
-      console.error(
-        "Inventory save error:",
-        err
-      );
+      console.error("Inventory save error:", err);
 
       setError(
         err?.message ||
@@ -271,15 +333,12 @@ export default function Inventory() {
   }
 
   /* =====================================================
-     UI
+     MAIN UI
   ===================================================== */
 
   return (
     <div>
-
-      {/* =================================================
-          PAGE HEADER
-      ================================================= */}
+      {/* PAGE HEADER */}
 
       <div className="page-head">
         <div>
@@ -295,6 +354,13 @@ export default function Inventory() {
             Record vaccine stock additions and usage
             from the selected refrigerator.
           </p>
+
+          {selectedVaccineName && (
+            <p className="card-sub">
+              Selected vaccine:{" "}
+              <b>{selectedVaccineName}</b>
+            </p>
+          )}
         </div>
 
         <span className="badge blue">
@@ -303,69 +369,62 @@ export default function Inventory() {
         </span>
       </div>
 
-      {/* =================================================
-          BACKEND ERROR
-      ================================================= */}
+      {/* BACKEND ERROR */}
 
       {backendError && (
-        <div className="alert warn">
+        <div className="alert warn" role="alert">
           <AlertTriangle size={14} />
           {backendError}
         </div>
       )}
 
-      {/* =================================================
-          INVENTORY CARD
-      ================================================= */}
+      {/* INVENTORY CARD */}
 
       <div className="card inventory-card">
-
         <div className="card-head">
-
           <div>
             <h3 className="card-title">
               Inventory log
             </h3>
 
             <div className="card-sub">
-              {logs.length} recorded inventory entries
+              {visibleLogs.length} recorded inventory entries
             </div>
           </div>
 
           <button
+            type="button"
             className="btn primary"
             onClick={() => {
-              setOpen(!open);
+              setOpen((previous) => !previous);
               setError("");
+              setName(selectedVaccineName);
             }}
           >
             <Plus size={13} />
             Add inventory
           </button>
-
         </div>
 
-        {/* =================================================
-            ENTRY FORM
-        ================================================= */}
+        {/* ENTRY FORM */}
 
         {open && (
           <div className="entry-form">
-
             {/* VACCINE */}
 
             <div>
-              <label>
-                Vaccine type
-              </label>
+              <label>Vaccine type</label>
 
               <input
                 className="input"
                 placeholder="e.g. BCG"
-                value={name}
+                value={selectedVaccineName || name}
+                readOnly={Boolean(selectedVaccineName)}
                 onChange={(e) => {
-                  setName(e.target.value);
-                  setError("");
+                  if (!selectedVaccineName) {
+                    setName(e.target.value);
+                    setError("");
+                  }
                 }}
               />
             </div>
@@ -373,13 +432,9 @@ export default function Inventory() {
             {/* TRANSACTION TYPE */}
 
             <div className="stock-type-field">
-
-              <label>
-                Transaction type
-              </label>
+              <label>Transaction type</label>
 
               <div className="stock-type-selector">
-
                 <button
                   type="button"
                   className={
@@ -396,7 +451,6 @@ export default function Inventory() {
 
                   <span>
                     <b>Stock In</b>
-
                     <small>
                       Add vaccines to inventory
                     </small>
@@ -419,13 +473,11 @@ export default function Inventory() {
 
                   <span>
                     <b>Stock Out</b>
-
                     <small>
                       Remove / use vaccines
                     </small>
                   </span>
                 </button>
-
               </div>
             </div>
 
@@ -442,6 +494,7 @@ export default function Inventory() {
                 className="input"
                 type="number"
                 min="1"
+                step="1"
                 placeholder="12"
                 value={qty}
                 onChange={(e) => {
@@ -454,9 +507,7 @@ export default function Inventory() {
             {/* AUTOMATIC DATE / TIME */}
 
             <div>
-              <label>
-                Date / time
-              </label>
+              <label>Date / time</label>
 
               <div className="input automatic-time">
                 <CalendarClock size={14} />
@@ -470,7 +521,10 @@ export default function Inventory() {
             {/* ERROR */}
 
             {error && (
-              <div className="inventory-error">
+              <div
+                className="inventory-error"
+                role="alert"
+              >
                 <AlertTriangle size={13} />
                 {error}
               </div>
@@ -479,12 +533,14 @@ export default function Inventory() {
             {/* ACTIONS */}
 
             <div className="form-actions">
-
               <button
+                type="button"
                 className="btn"
                 onClick={() => {
                   setOpen(false);
                   setError("");
+                  setQty("");
+                  setName(selectedVaccineName);
                 }}
                 disabled={saving}
               >
@@ -492,6 +548,7 @@ export default function Inventory() {
               </button>
 
               <button
+                type="button"
                 className="btn primary"
                 onClick={add}
                 disabled={saving}
@@ -502,20 +559,14 @@ export default function Inventory() {
                   ? "Add stock"
                   : "Remove stock"}
               </button>
-
             </div>
-
           </div>
         )}
 
-        {/* =================================================
-            TABLE
-        ================================================= */}
+        {/* INVENTORY TABLE */}
 
         <div className="table-wrap">
-
           <table className="table inventory-table">
-
             <thead>
               <tr>
                 <th>Vaccine type</th>
@@ -527,21 +578,17 @@ export default function Inventory() {
             </thead>
 
             <tbody>
-
-              {logs.map((item) => (
+              {visibleLogs.map((item) => (
                 <tr key={item.id}>
-
                   {/* VACCINE */}
 
                   <td>
                     <span className="vaccine-name">
-
                       <span className="vaccine-icon">
                         <Syringe size={14} />
                       </span>
 
                       {item.vaccine}
-
                     </span>
                   </td>
 
@@ -577,9 +624,7 @@ export default function Inventory() {
                           : "quantity-out"
                       }
                     >
-                      {item.type === "in"
-                        ? "+"
-                        : "-"}
+                      {item.type === "in" ? "+" : "-"}
                       {item.qty} doses
                     </b>
                   </td>
@@ -588,50 +633,38 @@ export default function Inventory() {
 
                   <td>
                     <span className="date-cell">
-
                       <CalendarClock size={13} />
-
                       {item.time}
-
                     </span>
                   </td>
 
                   {/* DEVICE */}
 
-                  <td>
-                    {item.device}
-                  </td>
-
+                  <td>{item.device}</td>
                 </tr>
               ))}
 
-              {logs.length === 0 && (
+              {visibleLogs.length === 0 && (
                 <tr>
                   <td
-                    colSpan="5"
+                    colSpan={5}
                     className="empty-inventory"
                   >
-                    No inventory records yet.
+                    {selectedVaccineName
+                      ? `No inventory records found for ${selectedVaccineName}. Add opening stock to begin tracking.`
+                      : "No inventory records yet."}
                   </td>
                 </tr>
               )}
-
             </tbody>
-
           </table>
-
         </div>
-
       </div>
 
-      {/* =================================================
-          INVENTORY SUMMARY
-      ================================================= */}
+      {/* INVENTORY SUMMARY */}
 
       <div className="grid grid-3 inventory-summary">
-
         <div className="stat">
-
           <div className="stat-label">
             Current stock
           </div>
@@ -643,11 +676,9 @@ export default function Inventory() {
           <div className="stat-meta">
             doses available
           </div>
-
         </div>
 
         <div className="stat">
-
           <div className="stat-label">
             Stock in
           </div>
@@ -659,11 +690,9 @@ export default function Inventory() {
           <div className="stat-meta">
             doses added
           </div>
-
         </div>
 
         <div className="stat">
-
           <div className="stat-label">
             Stock out
           </div>
@@ -675,11 +704,8 @@ export default function Inventory() {
           <div className="stat-meta">
             doses used
           </div>
-
         </div>
-
       </div>
-
     </div>
   );
 }

@@ -1,3 +1,4 @@
+
 import React from "react";
 import { Link } from "react-router-dom";
 import {
@@ -5,7 +6,10 @@ import {
   BrainCircuit,
   Syringe,
   CheckCircle2,
+  Thermometer,
+  RefreshCw,
 } from "lucide-react";
+
 import "../css/home.css";
 
 const features = [
@@ -26,7 +30,6 @@ const features = [
       "Cooling / device failure",
     ],
   },
-
   {
     to: "/prediction",
     icon: BrainCircuit,
@@ -38,7 +41,6 @@ const features = [
       "Early warning",
     ],
   },
-
   {
     to: "/inventory",
     icon: Syringe,
@@ -53,7 +55,39 @@ const features = [
   },
 ];
 
-export default function Home() {
+function getStorageRange(vaccine) {
+  if (
+    !vaccine ||
+    vaccine.minStorageTemp == null ||
+    vaccine.maxStorageTemp == null ||
+    vaccine.temperatureConfigurationValid === false ||
+    vaccine.configurationVerified !== true
+  ) {
+    return null;
+  }
+
+  const min = Number(vaccine.minStorageTemp);
+  const max = Number(vaccine.maxStorageTemp);
+  const unit = String(vaccine.temperatureUnit || "C").toUpperCase();
+
+  if (
+    !Number.isFinite(min) ||
+    !Number.isFinite(max) ||
+    min >= max ||
+    !["C", "F"].includes(unit)
+  ) {
+    return null;
+  }
+
+  return `${min}°${unit} to ${max}°${unit}`;
+}
+
+export default function Home({
+  selectedVaccine,
+  onChangeVaccine,
+}) {
+  const storageRange = getStorageRange(selectedVaccine);
+
   return (
     <div>
       {/* HERO */}
@@ -62,22 +96,83 @@ export default function Home() {
           COLD CHAIN MONITORING SYSTEM
         </div>
 
-        <h1>
-          Vaccine refrigerator control center
-        </h1>
+        <h1>Vaccine refrigerator control center</h1>
 
         <p>
-          A clear, professional workspace for monitoring
-          refrigerator health, predicting temperature risk
-          and maintaining vaccine usage records.
+          Monitor refrigerator health, understand temperature
+          risks and maintain vaccine usage records using the
+          selected vaccine's storage configuration.
         </p>
 
-        <div className="home-status">
-          <span className="status-dot" />
+        {/* SELECTED VACCINE */}
+        <div
+          className="home-status"
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            alignItems: "center",
+            gap: 10,
+          }}
+        >
+          <Thermometer size={17} />
 
-          Unit A is online · Safe operating range:{" "}
-          <b>2–8°C</b>
+          {selectedVaccine ? (
+            <>
+              <span>
+                Selected vaccine:{" "}
+                <b>{selectedVaccine.name || "Unnamed vaccine"}</b>
+              </span>
+
+              <span>·</span>
+
+              <span>
+                Storage range:{" "}
+                <b>{storageRange || "Not verified"}</b>
+              </span>
+            </>
+          ) : (
+            <span>
+              No vaccine selected. Select a vaccine before
+              using vaccine-specific monitoring.
+            </span>
+          )}
+
+          {onChangeVaccine && (
+            <button
+              type="button"
+              onClick={onChangeVaccine}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                padding: "7px 10px",
+                borderRadius: 8,
+                border: "1px solid currentColor",
+                background: "transparent",
+                cursor: "pointer",
+                font: "inherit",
+              }}
+            >
+              <RefreshCw size={13} />
+              Change vaccine
+            </button>
+          )}
         </div>
+
+        {selectedVaccine && !storageRange && (
+          <p
+            role="alert"
+            style={{
+              color: "#b45309",
+              fontWeight: 600,
+              marginTop: 12,
+            }}
+          >
+            Warning: This vaccine's storage limits are
+            missing or unverified. Do not assume a default
+            temperature range.
+          </p>
+        )}
       </section>
 
       {/* SYSTEM MODULES */}

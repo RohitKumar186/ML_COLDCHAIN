@@ -1,23 +1,44 @@
-const API_BASE =
-  "https://cold-chain-backend-8e6c.onrender.com/api";
+
+const API_BASE = (
+  import.meta.env.VITE_API_BASE ||
+  "https://cold-chain-backend-8e6c.onrender.com/api"
+).replace(/\/+$/, "");
+
+// =========================================================
+// COMMON API REQUEST
+// =========================================================
 
 async function request(endpoint, options = {}) {
-  const response = await fetch(`${API_BASE}${endpoint}`, {
-    headers: {
-      "Content-Type": "application/json",
-      ...(options.headers || {}),
-    },
-    ...options,
-  });
+  let response;
+
+  try {
+    response = await fetch(`${API_BASE}${endpoint}`, {
+      ...options,
+      headers: {
+        "Content-Type": "application/json",
+        ...(options.headers || {}),
+      },
+    });
+  } catch (error) {
+    console.error("Backend connection error:", error);
+
+    throw new Error(
+      "Unable to connect to the backend. Check your connection."
+    );
+  }
 
   if (!response.ok) {
-    let errorMessage = "Something went wrong";
+    let errorMessage = `Request failed (${response.status})`;
 
     try {
       const error = await response.json();
-      errorMessage = error.error || errorMessage;
+
+      errorMessage =
+        error.error ||
+        error.message ||
+        errorMessage;
     } catch {
-      // Ignore JSON parsing errors
+      // Response was not valid JSON.
     }
 
     throw new Error(errorMessage);
@@ -27,20 +48,50 @@ async function request(endpoint, options = {}) {
     return null;
   }
 
-  return response.json();
+  const contentType = response.headers.get("content-type");
+
+  if (contentType && !contentType.includes("application/json")) {
+    throw new Error(
+      "Backend returned an unexpected response format."
+    );
+  }
+
+  try {
+    return await response.json();
+  } catch {
+    throw new Error(
+      "Unable to read the response from the backend."
+    );
+  }
 }
+
+// =========================================================
+// MONITORING
+// =========================================================
 
 export function getMonitoring() {
   return request("/monitoring");
 }
 
+// =========================================================
+// HISTORY
+// =========================================================
+
 export function getHistory() {
   return request("/history");
 }
 
+// =========================================================
+// PREDICTION
+// =========================================================
+
 export function getPrediction() {
   return request("/prediction");
 }
+
+// =========================================================
+// INVENTORY
+// =========================================================
 
 export function getInventory() {
   return request("/inventory");
@@ -54,7 +105,71 @@ export function addInventoryLog(data) {
 }
 
 export function deleteInventoryLog(id) {
-  return request(`/inventory/${id}`, {
-    method: "DELETE",
-  });
+  if (id === null || id === undefined || String(id).trim() === "") {
+    throw new Error("An inventory record ID is required.");
+  }
+
+  return request(
+    `/inventory/${encodeURIComponent(id)}`,
+    {
+      method: "DELETE",
+    }
+  );
+}
+
+// =========================================================
+// VACCINES
+// =========================================================
+
+// Fetch vaccines from PostgreSQL through the backend.
+// Supports either:
+// 1. { vaccines: [...] }
+// 2. [...]
+export async function getVaccines() {
+  const result = await request("/vaccines");
+
+  const vaccines = Array.isArray(result)
+    ? result
+    : result?.vaccines;
+
+  if (!Array.isArray(vaccines)) {
+    throw new Error(
+      "Invalid vaccine data received from backend. Expected a vaccine list."
+    );
+  }
+
+  return vaccines;
+}
+
+// =========================================================
+// SINGLE VACCINE
+// =========================================================
+
+// Fetch one vaccine using its database ID.
+export async function getVaccine(id) {
+  if (
+    id === null ||
+    id === undefined ||
+    String(id).trim() === ""
+  ) {
+    throw new Error("A vaccine ID is required.");
+  }
+
+  const result = await request(
+    `/vaccines/${encodeURIComponent(id)}`
+  );
+
+  const vaccine = result?.vaccine ?? result;
+
+  if (
+    !vaccine ||
+    typeof vaccine !== "object" ||
+    Array.isArray(vaccine)
+  ) {
+    throw new Error(
+      "Vaccine details are unavailable."
+    );
+  }
+
+  return vaccine;
 }

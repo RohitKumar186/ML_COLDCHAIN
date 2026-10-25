@@ -26,6 +26,35 @@ import "../css/monitoring.css";
 import { getMonitoring } from "../api";
 
 
+// Convert configured vaccine limits to Celsius because sensor readings are in Celsius.
+function getVaccineLimits(vaccine) {
+  if (!vaccine) return null;
+
+  const min = Number(vaccine.minStorageTemp);
+  const max = Number(vaccine.maxStorageTemp);
+  const unit = vaccine.temperatureUnit || "C";
+
+  if (
+    vaccine.minStorageTemp == null ||
+    vaccine.maxStorageTemp == null ||
+    vaccine.configurationVerified !== true ||
+    vaccine.temperatureConfigurationValid === false ||
+    !Number.isFinite(min) ||
+    !Number.isFinite(max) ||
+    min >= max ||
+    !["C", "F"].includes(unit)
+  ) {
+    return null;
+  }
+
+  return {
+    minC: unit === "F" ? ((min - 32) * 5) / 9 : min,
+    maxC: unit === "F" ? ((max - 32) * 5) / 9 : max,
+    label: `${min}°${unit} – ${max}°${unit}`,
+  };
+}
+
+
 // =========================================================
 // TIME RANGE OPTIONS
 // =========================================================
@@ -108,7 +137,15 @@ function FailureItem({
 // MONITORING PAGE
 // =========================================================
 
-export default function Monitoring() {
+export default function Monitoring({ selectedVaccine }) {
+
+  // Vaccine limits come from the selected database record.
+  // Sensor readings are Celsius, so Fahrenheit limits are converted.
+  const vaccineLimits = getVaccineLimits(selectedVaccine);
+  const minTempC = vaccineLimits?.minC ?? null;
+  const maxTempC = vaccineLimits?.maxC ?? null;
+  const configuredRangeLabel = vaccineLimits?.label || "Not verified";
+
 
   // =======================================================
   // SENSOR VALUES
@@ -158,7 +195,6 @@ export default function Monitoring() {
 
   const [tempHistory, setTempHistory] =
     useState([]);
-
 
   const [graphRange, setGraphRange] =
     useState("10m");
@@ -229,13 +265,11 @@ export default function Monitoring() {
 
         setCoolingOn(false);
 
-
         setTemperatureFailure(true);
 
         setVoltageFailure(true);
 
         setDoorFailure(true);
-
 
         setBackendError("");
 
@@ -463,13 +497,11 @@ export default function Monitoring() {
 
       setCoolingOn(false);
 
-
       setTemperatureFailure(true);
 
       setVoltageFailure(true);
 
       setDoorFailure(true);
-
 
       setBackendError(
         "Unable to connect to monitoring backend."
@@ -490,7 +522,6 @@ export default function Monitoring() {
 
     loadMonitoring();
 
-
     const interval =
       setInterval(
         () => {
@@ -498,7 +529,6 @@ export default function Monitoring() {
         },
         5000
       );
-
 
     return () => {
 
@@ -578,11 +608,12 @@ export default function Monitoring() {
 
   const tempStatus =
     !deviceConnected ||
-    temperatureFailure
+    temperatureFailure ||
+    !vaccineLimits
       ? "bad"
       : temp !== null &&
-        temp >= 2 &&
-        temp <= 8
+        temp >= minTempC &&
+        temp <= maxTempC
       ? "ok"
       : "bad";
 
@@ -647,7 +678,6 @@ export default function Monitoring() {
             <CheckCircle2 size={12} />
           )}
 
-
           {!deviceConnected
             ? "Device offline"
             : anyFailure
@@ -670,6 +700,25 @@ export default function Monitoring() {
           <AlertTriangle size={14} />
 
           {backendError}
+
+        </div>
+
+      )}
+
+
+      {/* =================================================
+          VACCINE CONFIGURATION WARNING
+      ================================================= */}
+
+      {!vaccineLimits && (
+
+        <div className="alert warn" role="alert">
+
+          <AlertTriangle size={14} />
+
+          Selected vaccine storage limits are missing or unverified.
+          Temperature compliance cannot be assessed until a verified
+          configuration is available.
 
         </div>
 
@@ -708,7 +757,7 @@ export default function Monitoring() {
                 </h3>
 
                 <div className="card-sub">
-                  Core sensor · safe 2–8°C
+                  Core sensor · {selectedVaccine?.name || "No vaccine selected"}
                 </div>
 
               </div>
@@ -726,9 +775,11 @@ export default function Monitoring() {
                 ? "Offline"
                 : temperatureFailure
                 ? "Fault"
+                : !vaccineLimits
+                ? "Limits unavailable"
                 : temp !== null &&
-                  temp >= 2 &&
-                  temp <= 8
+                  temp >= minTempC &&
+                  temp <= maxTempC
                 ? "Normal"
                 : "Warning"}
 
@@ -797,16 +848,18 @@ export default function Monitoring() {
           </div>
 
 
-          {/* SAFE RANGE */}
+          {/* VACCINE STORAGE RANGE */}
 
           <div className="temperature-range">
 
             <span>
-              Safe operating range
+              {selectedVaccine?.name
+                ? `${selectedVaccine.name} storage range`
+                : "Selected vaccine storage range"}
             </span>
 
             <strong>
-              2°C — 8°C
+              {configuredRangeLabel}
             </strong>
 
           </div>
@@ -874,7 +927,6 @@ export default function Monitoring() {
                   {option.label}
 
                 </button>
-
               )
             )}
 
@@ -901,12 +953,17 @@ export default function Monitoring() {
                 />
 
 
-                <ReferenceArea
-                  y1={2}
-                  y2={8}
-                  fill="#159b61"
-                  fillOpacity={0.07}
-                />
+                {/* Show the configured vaccine range only
+                    when the configuration is verified. */}
+
+                {vaccineLimits && (
+                  <ReferenceArea
+                    y1={minTempC}
+                    y2={maxTempC}
+                    fill="#159b61"
+                    fillOpacity={0.07}
+                  />
+                )}
 
 
                 <XAxis
@@ -922,7 +979,24 @@ export default function Monitoring() {
                   tick={{
                     fontSize: 10,
                   }}
-                  domain={[0, 10]}
+                  domain={
+                    vaccineLimits
+                      ? [
+                          Math.floor(
+                            Math.min(
+                              minTempC,
+                              ...(values.length ? values : [minTempC])
+                            ) - 2
+                          ),
+                          Math.ceil(
+                            Math.max(
+                              maxTempC,
+                              ...(values.length ? values : [maxTempC])
+                            ) + 2
+                          ),
+                        ]
+                      : ["auto", "auto"]
+                  }
                   tickCount={6}
                 />
 
@@ -957,10 +1031,10 @@ export default function Monitoring() {
 
             <span>
 
-              Safe range:{" "}
+              Configured range:{" "}
 
               <b>
-                2°C – 8°C
+                {configuredRangeLabel}
               </b>
 
             </span>

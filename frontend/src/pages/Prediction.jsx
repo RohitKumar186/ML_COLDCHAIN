@@ -31,16 +31,58 @@ import { getPrediction } from "../api";
 
 
 /* =========================================================
+   VACCINE TEMPERATURE CONFIGURATION
+========================================================= */
+
+function getVaccineLimits(vaccine) {
+  if (!vaccine) return null;
+
+  const min = Number(vaccine.minStorageTemp);
+  const max = Number(vaccine.maxStorageTemp);
+  const unit = vaccine.temperatureUnit || "C";
+
+  if (
+    vaccine.configurationVerified !== true ||
+    vaccine.temperatureConfigurationValid === false ||
+    vaccine.minStorageTemp == null ||
+    vaccine.maxStorageTemp == null ||
+    !Number.isFinite(min) ||
+    !Number.isFinite(max) ||
+    min >= max ||
+    !["C", "F"].includes(unit)
+  ) {
+    return null;
+  }
+
+  // Sensor and forecast readings are Celsius.
+  const minC = unit === "F" ? ((min - 32) * 5) / 9 : min;
+  const maxC = unit === "F" ? ((max - 32) * 5) / 9 : max;
+
+  return {
+    minC,
+    maxC,
+    label: `${min}°${unit} – ${max}°${unit}`,
+  };
+}
+
+
+/* =========================================================
    PREDICTION PAGE
 ========================================================= */
 
-export default function Prediction() {
+export default function Prediction({ selectedVaccine }) {
 
   const [prediction, setPrediction] = useState(null);
 
   const [loading, setLoading] = useState(true);
 
   const [backendError, setBackendError] = useState("");
+
+  const vaccineLimits = getVaccineLimits(selectedVaccine);
+  const minTempC = vaccineLimits?.minC ?? null;
+  const maxTempC = vaccineLimits?.maxC ?? null;
+  const configuredRangeLabel =
+    vaccineLimits?.label || "Not verified";
 
 
   /* =======================================================
@@ -156,12 +198,8 @@ export default function Prediction() {
 
   /* =======================================================
      NEXT PREDICTED TEMPERATURE
-     
-     This is the value shown in the
-     "Projected Temperature" card.
-     
-     futureTemperatures[0]
-     = next 5-minute prediction
+
+     futureTemperatures[0] = next 5-minute prediction
   ======================================================= */
 
   const nextPrediction = useMemo(() => {
@@ -180,10 +218,8 @@ export default function Prediction() {
 
   /* =======================================================
      FINAL PREDICTION
-     
-     Last of the 20 forecast points.
-     
-     20 × 5 minutes = 100 minutes
+
+     Last of the forecast points.
   ======================================================= */
 
   const finalPrediction = useMemo(() => {
@@ -248,9 +284,7 @@ export default function Prediction() {
 
   const trend = useMemo(() => {
 
-    if (
-      prediction?.trend
-    ) {
+    if (prediction?.trend) {
 
       return String(
         prediction.trend
@@ -258,39 +292,22 @@ export default function Prediction() {
 
     }
 
-
-    if (
-      futureTemperatures.length === 0
-    ) {
-
+    if (futureTemperatures.length === 0) {
       return "STABLE";
-
     }
-
 
     const difference =
       futureTemperatures[
         futureTemperatures.length - 1
       ] - current;
 
-
-    if (
-      difference > 0.2
-    ) {
-
+    if (difference > 0.2) {
       return "UP";
-
     }
 
-
-    if (
-      difference < -0.2
-    ) {
-
+    if (difference < -0.2) {
       return "DOWN";
-
     }
-
 
     return "STABLE";
 
@@ -307,13 +324,9 @@ export default function Prediction() {
 
   const trendLabel =
     trend === "UP"
-
       ? "Temperature is expected to rise."
-
       : trend === "DOWN"
-
       ? "Temperature is expected to fall."
-
       : "Temperature is expected to remain stable.";
 
 
@@ -342,9 +355,7 @@ export default function Prediction() {
 
   const coolingDecision = useMemo(() => {
 
-    if (
-      prediction?.coolingDecision
-    ) {
+    if (prediction?.coolingDecision) {
 
       return String(
         prediction.coolingDecision
@@ -352,9 +363,7 @@ export default function Prediction() {
 
     }
 
-    if (
-      prediction?.cooling_decision
-    ) {
+    if (prediction?.cooling_decision) {
 
       return String(
         prediction.cooling_decision
@@ -362,24 +371,13 @@ export default function Prediction() {
 
     }
 
-
-    if (
-      coolingLevel >= 2
-    ) {
-
+    if (coolingLevel >= 2) {
       return "HIGH";
-
     }
 
-
-    if (
-      coolingLevel === 1
-    ) {
-
+    if (coolingLevel === 1) {
       return "LOW";
-
     }
-
 
     return "OFF";
 
@@ -395,29 +393,19 @@ export default function Prediction() {
 
   const peltierOn = useMemo(() => {
 
-    if (
-      prediction?.peltier !==
-      undefined
-    ) {
+    if (prediction?.peltier !== undefined) {
 
-      if (
-        typeof prediction.peltier ===
-        "boolean"
-      ) {
-
+      if (typeof prediction.peltier === "boolean") {
         return prediction.peltier;
-
       }
 
       return (
         String(
           prediction.peltier
-        ).toUpperCase() !==
-        "OFF"
+        ).toUpperCase() !== "OFF"
       );
 
     }
-
 
     return coolingLevel > 0;
 
@@ -428,69 +416,61 @@ export default function Prediction() {
 
 
   /* =======================================================
-     RISK
+     VACCINE-SPECIFIC FORECAST RISK
   ======================================================= */
 
   const risk = useMemo(() => {
 
+    // No risk classification without verified limits.
     if (
-      prediction?.risk
+      !vaccineLimits ||
+      projectedMin === null ||
+      projectedMax === null
     ) {
-
-      return String(
-        prediction.risk
-      ).toLowerCase();
-
+      return "unknown";
     }
 
-
     if (
-      projectedMax !== null &&
-      projectedMax > 8
+      projectedMin < minTempC ||
+      projectedMax > maxTempC
     ) {
-
       return "high";
-
     }
 
+    // Watch if the forecast approaches a configured boundary.
+    const rangeWidth = maxTempC - minTempC;
+    const watchMargin = rangeWidth * 0.1;
 
     if (
-      projectedMax !== null &&
-      projectedMax > 7.4
+      projectedMin <= minTempC + watchMargin ||
+      projectedMax >= maxTempC - watchMargin
     ) {
-
       return "watch";
-
     }
-
 
     return "low";
 
   }, [
-    prediction,
+    vaccineLimits,
+    minTempC,
+    maxTempC,
+    projectedMin,
     projectedMax,
   ]);
 
 
   const riskLabel =
     risk === "low"
-
       ? "Low risk"
-
       : risk === "watch"
-
       ? "Watch"
-
+      : risk === "unknown"
+      ? "Limits unavailable"
       : "Elevated risk";
 
 
   /* =======================================================
      GRAPH DATA
-     
-     Current point is connected to the
-     first ML prediction.
-     
-     Future points continue every 5 minutes.
   ======================================================= */
 
   const graphData = useMemo(() => {
@@ -499,14 +479,9 @@ export default function Prediction() {
       return [];
     }
 
-
     const result = [];
 
-
-    /* =====================================================
-       CURRENT
-    ===================================================== */
-
+    // Current sensor reading.
     result.push({
 
       x: "Now",
@@ -525,11 +500,7 @@ export default function Prediction() {
 
     });
 
-
-    /* =====================================================
-       FUTURE ML PREDICTIONS
-    ===================================================== */
-
+    // Future ML predictions.
     futureTemperatures.forEach(
       (
         value,
@@ -538,8 +509,7 @@ export default function Prediction() {
 
         result.push({
 
-          x:
-            `+${(index + 1) * 5}m`,
+          x: `+${(index + 1) * 5}m`,
 
           current: null,
 
@@ -548,14 +518,12 @@ export default function Prediction() {
               value.toFixed(2)
             ),
 
-          type:
-            "ML Predicted",
+          type: "ML Predicted",
 
         });
 
       }
     );
-
 
     return result;
 
@@ -597,7 +565,6 @@ export default function Prediction() {
           </div>
 
         </div>
-
 
         <div className="card">
 
@@ -645,7 +612,6 @@ export default function Prediction() {
 
         </div>
 
-
         <div className="alert warn">
 
           <AlertTriangle size={14} />
@@ -658,9 +624,7 @@ export default function Prediction() {
 
     );
   }
-
-
-  /* =======================================================
+    /* =======================================================
      MAIN UI
   ======================================================= */
 
@@ -668,10 +632,7 @@ export default function Prediction() {
 
     <div>
 
-
-      {/* ===================================================
-          HEADER
-      =================================================== */}
+      {/* HEADER */}
 
       <div className="page-head">
 
@@ -691,12 +652,17 @@ export default function Prediction() {
             and historical readings.
           </p>
 
-        </div>
+          <p className="card-sub">
+            Selected vaccine:{" "}
+            <b>{selectedVaccine?.name || "Not selected"}</b>
+            {" · "}Configured range: {configuredRangeLabel}
+          </p>
 
+        </div>
 
         <span
           className={`badge ${
-            risk === "high"
+            risk === "high" || risk === "unknown"
               ? "bad"
               : risk === "watch"
               ? "warn"
@@ -705,13 +671,9 @@ export default function Prediction() {
         >
 
           {risk === "low" ? (
-
             <ShieldCheck size={12} />
-
           ) : (
-
             <AlertTriangle size={12} />
-
           )}
 
           {riskLabel}
@@ -721,32 +683,40 @@ export default function Prediction() {
       </div>
 
 
-      {/* ===================================================
-          WARNING
-      =================================================== */}
+      {/* VACCINE LIMIT WARNING */}
 
-      {risk !== "low" && (
+      {!vaccineLimits && (
+
+        <div className="alert warn" role="alert">
+
+          <AlertTriangle size={14} />
+
+          The selected vaccine has no verified temperature limits.
+          Vaccine-specific forecast risk cannot be assessed.
+
+        </div>
+
+      )}
+
+      {vaccineLimits && risk !== "low" && risk !== "unknown" && (
 
         <div className="alert warn">
 
           <AlertTriangle size={14} />
 
-          Early warning: projected temperature
-          requires attention.
+          Early warning: projected temperature may approach or
+          exceed the selected vaccine's configured storage range.
 
         </div>
 
       )}
 
 
-      {/* ===================================================
-          TOP CARDS
-      =================================================== */}
+      {/* TOP CARDS */}
 
       <div className="grid grid-3 prediction-kpis">
 
-
-        {/* CURRENT */}
+        {/* CURRENT TEMPERATURE */}
 
         <div className="stat">
 
@@ -755,10 +725,7 @@ export default function Prediction() {
           </div>
 
           <div className="stat-value">
-
-            {current.toFixed(1)}
-            °C
-
+            {current.toFixed(1)}°C
           </div>
 
           <div className="stat-meta">
@@ -768,7 +735,7 @@ export default function Prediction() {
         </div>
 
 
-        {/* PROJECTED */}
+        {/* PROJECTED TEMPERATURE */}
 
         <div className="stat">
 
@@ -777,29 +744,21 @@ export default function Prediction() {
           </div>
 
           <div className="stat-value">
-
             {hasPrediction
-
               ? `${nextPrediction.toFixed(1)}°C`
-
               : "—"}
-
           </div>
 
           <div className="stat-meta">
-
             {hasPrediction
-
               ? "Next 5 minutes"
-
               : "Waiting for ML prediction"}
-
           </div>
 
         </div>
 
 
-        {/* RANGE */}
+        {/* PROJECTED RANGE */}
 
         <div className="stat">
 
@@ -808,25 +767,17 @@ export default function Prediction() {
           </div>
 
           <div className="stat-value">
-
             {hasPrediction
-
               ? `${projectedMin.toFixed(1)}–${projectedMax.toFixed(1)}°C`
-
               : "—"}
-
           </div>
 
           <div className="stat-meta">
-
             {hasPrediction
-
               ? `${futureTemperatures.length} ML predictions · ${
                   futureTemperatures.length * 5
                 } minutes`
-
               : "No forecast available"}
-
           </div>
 
         </div>
@@ -834,12 +785,9 @@ export default function Prediction() {
       </div>
 
 
-      {/* ===================================================
-          CONTROL CARDS
-      =================================================== */}
+      {/* CONTROL CARDS */}
 
       <div className="grid grid-3 prediction-kpis">
-
 
         {/* COOLING */}
 
@@ -915,18 +863,14 @@ export default function Prediction() {
             }`}
           >
 
-            {peltierOn
-              ? "ON"
-              : "OFF"}
+            {peltierOn ? "ON" : "OFF"}
 
           </div>
 
           <div className="stat-meta">
-
             {peltierOn
               ? "Cooling is active"
               : "Cooling is inactive"}
-
           </div>
 
         </div>
@@ -934,9 +878,7 @@ export default function Prediction() {
       </div>
 
 
-      {/* ===================================================
-          TREND CARD
-      =================================================== */}
+      {/* TREND CARD */}
 
       <div className="card prediction-trend">
 
@@ -945,11 +887,8 @@ export default function Prediction() {
           <div>
 
             <h3 className="card-title">
-
               <TrendingUp size={15} />
-
               Predicted trend
-
             </h3>
 
             <div className="card-sub">
@@ -957,7 +896,6 @@ export default function Prediction() {
             </div>
 
           </div>
-
 
           <BrainCircuit
             size={17}
@@ -969,9 +907,7 @@ export default function Prediction() {
       </div>
 
 
-      {/* ===================================================
-          TEMPERATURE FORECAST GRAPH
-      =================================================== */}
+      {/* TEMPERATURE FORECAST GRAPH */}
 
       <div className="card prediction-chart">
 
@@ -980,22 +916,16 @@ export default function Prediction() {
           <div>
 
             <h3 className="card-title">
-
               <TrendingUp size={15} />
-
               Temperature forecast
-
             </h3>
 
             <div className="card-sub">
-
               Current sensor reading followed
               by ML-predicted future temperature
-
             </div>
 
           </div>
-
 
           <BrainCircuit
             size={17}
@@ -1005,9 +935,7 @@ export default function Prediction() {
         </div>
 
 
-        {/* =================================================
-            FORECAST SUMMARY
-        ================================================= */}
+        {/* FORECAST SUMMARY */}
 
         {hasPrediction && (
 
@@ -1019,42 +947,30 @@ export default function Prediction() {
             }}
           >
 
-            <b>
-              {current.toFixed(1)}°C
-            </b>
+            <b>{current.toFixed(1)}°C</b>
 
             {" → "}
 
-            <b>
-              {nextPrediction.toFixed(1)}°C
-            </b>
+            <b>{nextPrediction.toFixed(1)}°C</b>
 
             {" next 5 min · "}
 
-            <b>
-              {finalPrediction.toFixed(1)}°C
-            </b>
+            <b>{finalPrediction.toFixed(1)}°C</b>
 
             {" after "}
 
-            <b>
-              {futureTemperatures.length * 5} min
-            </b>
+            <b>{futureTemperatures.length * 5} min</b>
 
             {" · Trend: "}
 
-            <b>
-              {trend}
-            </b>
+            <b>{trend}</b>
 
           </div>
 
         )}
 
 
-        {/* =================================================
-            GRAPH
-        ================================================= */}
+        {/* GRAPH */}
 
         <div
           className="chart-box"
@@ -1073,8 +989,7 @@ export default function Prediction() {
               }}
             >
 
-              ML future prediction is
-              not available yet.
+              ML future prediction is not available yet.
 
               <br />
 
@@ -1099,8 +1014,6 @@ export default function Prediction() {
                 }}
               >
 
-                {/* GRID */}
-
                 <CartesianGrid
                   stroke="#e7ebf1"
                   strokeDasharray="3 3"
@@ -1108,34 +1021,34 @@ export default function Prediction() {
                 />
 
 
-                {/* SAFE RANGE */}
+                {/* SELECTED VACCINE STORAGE RANGE */}
 
-                <ReferenceArea
-                  y1={2}
-                  y2={8}
-                  fill="#159b61"
-                  fillOpacity={0.06}
-                />
+                {vaccineLimits && (
+                  <ReferenceArea
+                    y1={minTempC}
+                    y2={maxTempC}
+                    fill="#159b61"
+                    fillOpacity={0.06}
+                  />
+                )}
 
+                {vaccineLimits && (
+                  <>
+                    <ReferenceLine
+                      y={maxTempC}
+                      stroke="#d94250"
+                      strokeDasharray="4 4"
+                      label={`${maxTempC.toFixed(1)}°C max`}
+                    />
 
-                {/* 8°C LIMIT */}
-
-                <ReferenceLine
-                  y={8}
-                  stroke="#d94250"
-                  strokeDasharray="4 4"
-                  label="8°C"
-                />
-
-
-                {/* 2°C LIMIT */}
-
-                <ReferenceLine
-                  y={2}
-                  stroke="#d94250"
-                  strokeDasharray="4 4"
-                  label="2°C"
-                />
+                    <ReferenceLine
+                      y={minTempC}
+                      stroke="#d94250"
+                      strokeDasharray="4 4"
+                      label={`${minTempC.toFixed(1)}°C min`}
+                    />
+                  </>
+                )}
 
 
                 {/* X AXIS */}
@@ -1175,33 +1088,21 @@ export default function Prediction() {
                       value === null ||
                       value === undefined
                     ) {
-
                       return null;
-
                     }
 
                     return [
-
-                      `${Number(
-                        value
-                      ).toFixed(2)}°C`,
-
-                      name ===
-                      "ML Predicted"
-
+                      `${Number(value).toFixed(2)}°C`,
+                      name === "ML Predicted"
                         ? "ML Predicted"
-
                         : "Current",
-
                     ];
 
                   }}
                 />
 
 
-                {/* =================================================
-                    CURRENT SENSOR LINE
-                ================================================= */}
+                {/* CURRENT SENSOR LINE */}
 
                 <Line
                   type="monotone"
@@ -1216,12 +1117,7 @@ export default function Prediction() {
                 />
 
 
-                {/* =================================================
-                    ML FORECAST LINE
-                   
-                    Starts at CURRENT and then follows
-                    all 20 future predicted points.
-                ================================================= */}
+                {/* ML FORECAST LINE */}
 
                 <Line
                   type="monotone"
@@ -1243,74 +1139,57 @@ export default function Prediction() {
           )}
 
         </div>
-
-
-        {/* =================================================
-            GRAPH FOOTER
-        ================================================= */}
+                {/* GRAPH FOOTER */}
 
         <div className="chart-footer">
 
           <span>
-
-            Safe range:{" "}
+            {selectedVaccine?.name || "Vaccine"} range:{" "}
 
             <b>
-              2°C – 8°C
+              {configuredRangeLabel}
             </b>
-
           </span>
 
 
           <span>
-
             Current:{" "}
 
             <b>
               {current.toFixed(1)}°C
             </b>
-
           </span>
 
 
           <span>
-
             Next 5 min:{" "}
 
             <b>
-
               {hasPrediction
                 ? `${nextPrediction.toFixed(1)}°C`
                 : "—"}
-
             </b>
-
           </span>
 
 
           <span>
-
-            100 min:{" "}
-
-            <b>
-
-              {hasPrediction
-                ? `${finalPrediction.toFixed(1)}°C`
-                : "—"}
-
-            </b>
-
+          {hasPrediction
+          ? `${futureTemperatures.length * 5} min: `
+            : "Forecast: "}
+          <b>
+            {hasPrediction
+            ? `${finalPrediction.toFixed(1)}°C`
+            : "—"}
+          </b>
           </span>
 
 
           <span>
-
             Trend:{" "}
 
             <b>
               {trend}
             </b>
-
           </span>
 
         </div>
@@ -1318,12 +1197,9 @@ export default function Prediction() {
       </div>
 
 
-      {/* ===================================================
-          HOW IT WORKS
-      =================================================== */}
+      {/* HOW IT WORKS */}
 
       <div className="grid grid-2 prediction-info">
-
 
         <div className="card">
 
@@ -1345,7 +1221,7 @@ export default function Prediction() {
 
             <div className="list-row">
               03 · The trained model predicts
-              the next 20 temperature points.
+              future temperature points.
             </div>
 
             <div className="list-row">
@@ -1354,13 +1230,13 @@ export default function Prediction() {
             </div>
 
             <div className="list-row">
-              05 · The complete forecast therefore
-              represents approximately 100 minutes.
+              05 · The complete forecast duration
+              depends on the number of predictions.
             </div>
 
             <div className="list-row">
-              06 · Cooling control uses the
-              predicted temperature trend.
+              06 · Review cooling status alongside
+              the predicted temperature trend.
             </div>
 
           </div>
@@ -1391,9 +1267,10 @@ export default function Prediction() {
             </div>
 
             <div className="list-row">
-              • Review the predicted trend
-              before temperature leaves
-              the 2–8°C range.
+              • Compare the forecast with the selected
+              vaccine's verified storage range.
+              If limits are unavailable, do not assume
+              a safe range.
             </div>
 
           </div>
@@ -1401,7 +1278,6 @@ export default function Prediction() {
         </div>
 
       </div>
-
 
     </div>
 

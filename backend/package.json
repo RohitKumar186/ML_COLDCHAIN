@@ -1,3 +1,4 @@
+
 {
   "name": "cold-chain-dashboard-backend",
   "private": true,
@@ -5,7 +6,9 @@
   "type": "module",
   "scripts": {
     "dev": "nodemon server.js",
-    "start": "node server.js"
+    "start": "node server.js",
+    "migrate": "node scripts/migrate.js",
+    "test": "node --test"
   },
   "dependencies": {
     "cors": "^2.8.5",
