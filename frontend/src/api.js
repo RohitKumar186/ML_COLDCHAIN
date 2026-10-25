@@ -85,59 +85,9 @@ export function getHistory() {
 // PREDICTION
 // =========================================================
 
-
-export async function getPrediction() {
-  try {
-    return await request("/prediction");
-  } catch (error) {
-    console.warn(
-      "Prediction API unavailable. Using demo data:",
-      error.message
-    );
-
-    const inside = Number(
-      (5.5 + Math.random() * 1.5).toFixed(1)
-    );
-
-    const outside = 28.5;
-
-    const predicted = Number(
-      (inside + Math.random() * 0.6 - 0.2).toFixed(1)
-    );
-
-    const coolingLevel =
-      predicted < 2 ? 0 :
-      predicted <= 8 ? 1 : 2;
-
-    return {
-      inside_temperature: inside,
-      outside_temperature: outside,
-      predicted_inside_temp: predicted,
-      future_temperatures: [predicted],
-      cooling_level: coolingLevel,
-      cooling_decision:
-        coolingLevel === 0
-          ? "OFF"
-          : coolingLevel === 1
-            ? "NORMAL COOLING"
-            : "MAX COOLING",
-      peltier: coolingLevel > 0,
-      risk:
-        predicted < 2 || predicted > 8
-          ? "high"
-          : "low",
-      trend:
-        predicted > inside
-          ? "RISING"
-          : predicted < inside
-            ? "FALLING"
-            : "STABLE",
-      demo_mode: true,
-      timestamp: new Date().toISOString(),
-    };
-  }
+export function getPrediction() {
+  return request("/prediction");
 }
-
 
 // =========================================================
 // INVENTORY
