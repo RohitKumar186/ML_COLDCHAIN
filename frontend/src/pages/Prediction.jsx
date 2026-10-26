@@ -147,7 +147,7 @@ export default function Prediction({ selectedVaccine }) {
   const current = useMemo(() => {
 
     if (!prediction) {
-      return 0;
+      return null;
     }
 
     const value =
@@ -156,7 +156,12 @@ export default function Prediction({ selectedVaccine }) {
       prediction.current ??
       prediction.temperature;
 
-    return Number(value) || 0;
+    if (value === null || value === undefined || value === "") {
+      return null;
+    }
+
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
 
   }, [prediction]);
 
@@ -292,8 +297,8 @@ export default function Prediction({ selectedVaccine }) {
 
     }
 
-    if (futureTemperatures.length === 0) {
-      return "STABLE";
+    if (futureTemperatures.length === 0 || current === null) {
+      return "WAITING";
     }
 
     const difference =
@@ -327,6 +332,8 @@ export default function Prediction({ selectedVaccine }) {
       ? "Temperature is expected to rise."
       : trend === "DOWN"
       ? "Temperature is expected to fall."
+      : trend === "WAITING"
+      ? "Waiting for live sensor data and an ML forecast."
       : "Temperature is expected to remain stable.";
 
 
@@ -337,14 +344,16 @@ export default function Prediction({ selectedVaccine }) {
   const coolingLevel = useMemo(() => {
 
     if (!prediction) {
-      return 0;
+      return null;
     }
 
-    return Number(
-      prediction.coolingLevel ??
-      prediction.cooling_level ??
-      0
-    );
+    const value = prediction.coolingLevel ?? prediction.cooling_level;
+    if (value === null || value === undefined || value === "") {
+      return null;
+    }
+
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
 
   }, [prediction]);
 
@@ -369,6 +378,10 @@ export default function Prediction({ selectedVaccine }) {
         prediction.cooling_decision
       ).toUpperCase();
 
+    }
+
+    if (coolingLevel === null) {
+      return "UNAVAILABLE";
     }
 
     if (coolingLevel >= 2) {
@@ -405,6 +418,10 @@ export default function Prediction({ selectedVaccine }) {
         ).toUpperCase() !== "OFF"
       );
 
+    }
+
+    if (coolingLevel === null) {
+      return null;
     }
 
     return coolingLevel > 0;
@@ -481,24 +498,15 @@ export default function Prediction({ selectedVaccine }) {
 
     const result = [];
 
-    // Current sensor reading.
-    result.push({
-
-      x: "Now",
-
-      current:
-        Number(
-          current.toFixed(2)
-        ),
-
-      predicted:
-        Number(
-          current.toFixed(2)
-        ),
-
-      type: "Current",
-
-    });
+    // Add a current point only when a real sensor reading exists.
+    if (current !== null) {
+      result.push({
+        x: "Now",
+        current: Number(current.toFixed(2)),
+        predicted: Number(current.toFixed(2)),
+        type: "Current",
+      });
+    }
 
     // Future ML predictions.
     futureTemperatures.forEach(
@@ -535,98 +543,11 @@ export default function Prediction({ selectedVaccine }) {
 
 
   /* =======================================================
-     LOADING
-  ======================================================= */
-
-  if (loading) {
-
-    return (
-
-      <div>
-
-        <div className="page-head">
-
-          <div>
-
-            <div className="eyebrow">
-              03 · FORECAST
-            </div>
-
-            <h1 className="page-title">
-              Prediction
-            </h1>
-
-            <p className="page-desc">
-              Short-term temperature prediction
-              and early warning based on current
-              and historical readings.
-            </p>
-
-          </div>
-
-        </div>
-
-        <div className="card">
-
-          <div className="card-sub">
-            Loading prediction data...
-          </div>
-
-        </div>
-
-      </div>
-
-    );
-  }
-
-
-  /* =======================================================
-     BACKEND ERROR
-  ======================================================= */
-
-  if (backendError) {
-
-    return (
-
-      <div>
-
-        <div className="page-head">
-
-          <div>
-
-            <div className="eyebrow">
-              03 · FORECAST
-            </div>
-
-            <h1 className="page-title">
-              Prediction
-            </h1>
-
-            <p className="page-desc">
-              Short-term temperature prediction
-              and early warning based on current
-              and historical readings.
-            </p>
-
-          </div>
-
-        </div>
-
-        <div className="alert warn">
-
-          <AlertTriangle size={14} />
-
-          {backendError}
-
-        </div>
-
-      </div>
-
-    );
-  }
-    /* =======================================================
      MAIN UI
+     Keep the dashboard visible even when the sensor/API has
+     no data. Empty values are shown as unavailable, not zero.
   ======================================================= */
+
 
   return (
 
@@ -683,6 +604,16 @@ export default function Prediction({ selectedVaccine }) {
       </div>
 
 
+      {/* SENSOR / BACKEND STATUS */}
+      {(backendError || !prediction || current === null) && (
+        <div className="alert warn" role="status" style={{ marginBottom: "16px" }}>
+          <AlertTriangle size={14} />
+          {backendError
+            ? "Prediction service is unavailable. The page is still displayed; live values will appear when the backend and sensor data are available."
+            : "Waiting for ESP32 sensor data. The dashboard is ready, but live temperature and ML predictions are not available yet."}
+        </div>
+      )}
+
       {/* VACCINE LIMIT WARNING */}
 
       {!vaccineLimits && (
@@ -725,7 +656,7 @@ export default function Prediction({ selectedVaccine }) {
           </div>
 
           <div className="stat-value">
-            {current.toFixed(1)}°C
+            {current === null ? "—" : `${current.toFixed(1)}°C`}
           </div>
 
           <div className="stat-meta">
@@ -812,7 +743,7 @@ export default function Prediction({ selectedVaccine }) {
           </div>
 
           <div className="stat-meta">
-            Level {coolingLevel} / 2
+            {coolingLevel === null ? "No control data" : `Level ${coolingLevel} / 2`}
           </div>
 
         </div>
@@ -857,18 +788,22 @@ export default function Prediction({ selectedVaccine }) {
 
           <div
             className={`stat-value ${
-              peltierOn
+              peltierOn === null
+                ? ""
+                : peltierOn
                 ? "risk-watch"
                 : "risk-low"
             }`}
           >
 
-            {peltierOn ? "ON" : "OFF"}
+            {peltierOn === null ? "Unavailable" : peltierOn ? "ON" : "OFF"}
 
           </div>
 
           <div className="stat-meta">
-            {peltierOn
+            {peltierOn === null
+              ? "Waiting for device status"
+              : peltierOn
               ? "Cooling is active"
               : "Cooling is inactive"}
           </div>
@@ -947,7 +882,7 @@ export default function Prediction({ selectedVaccine }) {
             }}
           >
 
-            <b>{current.toFixed(1)}°C</b>
+            <b>{current === null ? "—" : `${current.toFixed(1)}°C`}</b>
 
             {" → "}
 
@@ -1156,7 +1091,7 @@ export default function Prediction({ selectedVaccine }) {
             Current:{" "}
 
             <b>
-              {current.toFixed(1)}°C
+              {current === null ? "—" : `${current.toFixed(1)}°C`}
             </b>
           </span>
 
